@@ -1,0 +1,87 @@
+{
+    "testServer": "1275070473474146345",
+    "clientId": "1274080784793473034",
+    "devs": ["343809308967829504"],
+    "servers": {
+        "1275070473474146345":
+        {
+            "_comment": "WN Helper",
+            "leaderRoleId": "1293906081927528489",
+            "citizenChannelId": "1293910446969196574",
+            "confirmRoleChannelId": "1293910404572909710",
+            "kaChannelId": "1293910674283696169",
+            "kaDeleteChannelId": "1293910716163821670",
+            "weazelNewsRoleId": "1293915683159150715",
+            "traineeRoleId": "1293915723583721512",
+            "firstRankRoleId": "1293915837174120488",
+            "thirdRankRoleId": "1293915953595289621",
+            "retestingRoleId": "1293916001879986208",
+            "citizenRoleId": "1293916167253131315",
+            "luckerRoleId": "1293916222743646249",
+            "WNLegendRoleId": "1293916274455220274",
+            "amdShiftsChannelId": "1293910490832965643",
+            "AMDRoleId": "1293916321133625344",
+            "headAMDRoleId": "1293917763110305885"
+        },
+        "1249711898744848415":
+        {
+            "_comment": "WN Dallas",
+            "leaderRoleId": "1249711898820214809",
+            "citizenChannelId": "1249711899122339867",
+            "confirmRoleChannelId": "1269386445228085248",
+            "kaChannelId": "1249711899948355587",
+            "kaDeleteChannelId": "1276130620606775317",
+            "weazelNewsRoleId": "1249711898744848417",
+            "traineeRoleId": "1249711898744848419",
+            "firstRankRoleId": "1249711898744848422",
+            "thirdRankRoleId": "1249711898744848424",
+            "retestingRoleId": "1249711898744848420",
+            "citizenRoleId": "1249711898744848416",
+            "luckerRoleId": "1250867017624326144",
+            "WNLegendRoleId": "1282311335786446889",
+            "amdShiftsChannelId": "1263057136452112406",
+            "AMDRoleId": "1249711898765562003",
+            "headAMDRoleId": "1249711898820214804"
+        },
+        "1274110088042512527":
+        {
+            "_comment": "WN Boston",
+            "leaderRoleId": "1274110088071614533",
+            "citizenChannelId": "1274151977953132626",
+            "confirmRoleChannelId": "1276157766498517014",
+            "kaChannelId": "1274110089300541465",
+            "kaDeleteChannelId": "1276191563218685982",
+            "weazelNewsRoleId": "1274110088042512531",
+            "traineeRoleId": "1274110088042512532",
+            "firstRankRoleId": "",
+            "thirdRankRoleId": "",
+            "retestingRoleId": "1274110088042512533",
+            "citizenRoleId": "",
+            "luckerRoleId": "",
+            "WNLegendRoleId": "",
+            "amdShiftsChannelId": "1276111071853281313",
+            "AMDRoleId": "1274110088071614528",
+            "headAMDRoleId": "1274501413229170759"
+        },
+        "1118892183060230234":
+        {
+            "_comment": "WN Miami",
+            "leaderRoleId": "1118892183303491598",
+            "citizenChannelId": "1118892193575342083",
+            "confirmRoleChannelId": "1286838451056152639",
+            "kaChannelId": "1163895289371951205",
+            "kaDeleteChannelId": "1286839038891790366",
+            "weazelNewsRoleId": "1118892183060230239",
+            "traineeRoleId": "1120141620453584927",
+            "firstRankRoleId": "1119622919073583165",
+            "thirdRankRoleId": "1119622913788751932",
+            "retestingRoleId": "1118892183089582130",
+            "citizenRoleId": "1118892183060230236",
+            "luckerRoleId": "1230602348779405352",
+            "WNLegendRoleId": "1151060816473378926",
+            "amdShiftsChannelId": "1286838644375687251",
+            "AMDRoleId": "1118892183152500766",
+            "headAMDRoleId": "1118892183228002381"
+        }
+    }
+}
