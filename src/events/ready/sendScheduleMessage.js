@@ -22,9 +22,11 @@ const amdShifts = require('../../models/amdShifts');
 
 module.exports = async (client) => {
     for (const serverId of Object.keys(config.servers)){
+        //if (serverId !== "1275070473474146345") break;
         const serverName = client.guilds.cache.get(serverId);
         const channel = await client.channels.fetch(config.servers[serverId].amdShiftsChannelId);
         const AMDRoleId = config.servers[serverId].AMDRoleId;
+        const partWorkAMDRoleId = config.servers[serverId].partWorkAMDRoleId;
         const headAMDRoleId = config.servers[serverId].headAMDRoleId;
         console.log(`Смены для AMD успешно запланированы на сервере ${serverName}.`);
         cron.schedule('0 21 * * *', async () => {
@@ -37,52 +39,20 @@ module.exports = async (client) => {
             const query = {
                 guildId: serverId,
             };
-            console.log(serverId);
 
             const ifGuildId = await amdShifts.findOne(query);
 
             if (ifGuildId) {
-                const previousDate = ifGuildId.date;
                 const messageId = ifGuildId.messageId;
                 const message = await channel.messages.fetch(messageId);
-   
-                let firstHour = ifGuildId.firstHour;
-                if (!(firstHour === 'Свободно')) firstHour = await client.users.fetch(firstHour);
-                let secondHour = ifGuildId.secondHour;
-                if (!(secondHour === 'Свободно')) secondHour = await client.users.fetch(secondHour);
-                let thirdHour = ifGuildId.thirdHour;
-                if (!(thirdHour === 'Свободно')) thirdHour = await client.users.fetch(thirdHour);
-                let fourthHour = ifGuildId.fourthHour;
-                if (!(fourthHour === 'Свободно')) fourthHour = await client.users.fetch(fourthHour);
-                let fifthHour = ifGuildId.fifthHour;
-                if (!(fifthHour === 'Свободно')) fifthHour = await client.users.fetch(fifthHour);
-                let sixthHour = ifGuildId.sixthHour;
-                if (!(sixthHour === 'Свободно')) sixthHour = await client.users.fetch(sixthHour);
-                let seventhHour = ifGuildId.seventhHour;
-                if (!(seventhHour === 'Свободно')) seventhHour = await client.users.fetch(seventhHour);
-                let eighthHour = ifGuildId.eighthHour;
-                if (!(eighthHour === 'Свободно')) eighthHour = await client.users.fetch(eighthHour);
-
-                const content = `:white_check_mark: Смены на ${previousDate}:
-
-:one: 14:00 - 14:55: ${firstHour}
-:two: 15:00 - 15:55: ${secondHour}
-:three: 16:00 - 16:55: ${thirdHour}
-:four: 17:00 - 17:55: ${fourthHour}
-:five: 18:00 - 18:55: ${fifthHour}
-:six: 19:00 - 19:55: ${sixthHour}
-:seven: 20:00 - 20:55: ${seventhHour}
-:eight: 21:00 - 22:00: ${eighthHour}
-
-**Нажмите на кнопку, соответствующую времени смены, чтобы занять текущее время в холле и для отправления объявлений.**
-Пользователи с ролью <@&${headAMDRoleId}> также могут нажать на кнопку, чтобы убрать сотрудника из списка.
-<@&${AMDRoleId}>
--# WN Helper by Michael Lindberg. Discord: milkgames`;
-            
-                await message.edit({ content: content, components: [] });
-  
+                await message.edit({ components: [] });
                 await amdShifts.deleteOne(query);
             }
+
+            let pingRoles;
+            if (partWorkAMDRoleId) pingRoles = `<@&${partWorkAMDRoleId}>
+<@&${AMDRoleId}>`;
+            else pingRoles = `<@&${AMDRoleId}>`;
 
             const content = `:white_check_mark: Смены на ${formattedDate}:
 
@@ -97,7 +67,9 @@ module.exports = async (client) => {
 
 **Нажмите на кнопку, соответствующую времени смены, чтобы занять текущее время в холле и для отправления объявлений.**
 Пользователи с ролью <@&${headAMDRoleId}> также могут нажать на кнопку, чтобы убрать сотрудника из списка.
-<@&${AMDRoleId}>
+В очень редких случаях кнопки могут оставаться неактивными после того, как вы на них нажали.
+Это визуальный баг, используйте Ctrl+R, чтобы перезапустить Discord и кнопки вновь будут активными.
+${pingRoles}
 -# WN Helper by Michael Lindberg. Discord: milkgames`;
 
             const rows = [];

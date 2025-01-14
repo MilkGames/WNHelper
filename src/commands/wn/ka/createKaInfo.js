@@ -23,7 +23,6 @@ module.exports = {
     description: 'Добавляет сообщение с выдачей ролей для Trainee Department в выбранном канале.',
     //devOnly: Boolean
     //testOnly: Boolean
-    deletedBoston: true,
     options: [
         {
             name: 'channel',
@@ -37,6 +36,7 @@ module.exports = {
 
     callback: async (client, interaction) => {
         try {
+            await interaction.deferReply({ ephemeral: true });
             const channel = interaction.options.getChannel('channel');
             if (!channel) return;
 
@@ -113,8 +113,7 @@ module.exports = {
 
             const rankReportEmbed = new EmbedBuilder()
                 .setColor(0x2ECC70)
-                .setDescription(`**Повышение сотрудников по отчёту**
-
+                .setDescription(`\`\`\`Повышение сотрудников по отчёту\`\`\`
 У бота есть функционал для мгновенного повышения сотрудников по отчёту на повышение.
 Для этого необходимо нажать правой кнопкой мыши по **отчёту** сотрудника, выбрать **Приложения** и нажать на кнопку **Повысить по отчёту**.
 В всплывающем окне необходимо ввести изменение ранга, к примеру: **4-5** и нажать на **Отправить**.
@@ -158,23 +157,31 @@ module.exports = {
 - **static** - Автоматически выдаст ошибку при его отсутствии
 
 Также вам не нужно отправлять данную команду в канале кадрового аудита.
-Кадровый аудит автоматически заполнится в том канале, в котором необходимо.`)
-                .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' })
+Кадровый аудит автоматически заполнится в том канале, в котором необходимо.`);
 
-            const embeds = [inviteEmbed, rankEmbed, rankReportEmbed, uvalEmbed];
+            const deleteEmbed = new EmbedBuilder()
+                .setColor(0xFF2C2C)
+                .setDescription(`\`\`\`Удаление записи из кадрового аудита\`\`\`
+Добавьте реакцию ❌ к любому сообщению в кадровом аудите.
+Лидеру фракции в отдельном канале придёт пинг с запросом на удаление записи из кадрового аудита.`)
+                .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+
+            const embeds = [inviteEmbed, rankEmbed, rankReportEmbed, uvalEmbed, deleteEmbed];
 
             await channel.send({ embeds: embeds });
-            await interaction.reply({
+            await interaction.editReply({
                 content: `Сообщение создано успешно в канале ${channel}!`,
                 ephemeral: true,
             });
             return;
         } catch (error) {
             console.log(`Произошла ошибка при создании сообщения с информацией о кадровом аудите: ${error}`);
-            await interaction.reply({
-                content: `Произошла ошибка при создании сообщения с информацией о кадровом аудите: ${error}`,
-                ephemeral: true,
-            });
+            if (!interaction.replied) {
+                await interaction.editReply({
+                    content: `Произошла ошибка при создании сообщения с информацией о кадровом аудите: ${error}`,
+                    ephemeral: true,
+                });
+            }
         }
     },
 };

@@ -68,9 +68,9 @@ module.exports = async (client) => {
                         continue;
                     }
 
-                    if (localCommand.deletedBoston && serverId === Object.keys(config.servers)[2]){
+                    if (localCommand.mainOnly && serverId !== Object.keys(config.servers)[0]){
                         await applicationCommands.delete(existingCommand.id);
-                        console.log(`Удалена команда "${name}" на сервере ${serverName} из-за ограничений по кадровому аудиту.`);
+                        console.log(`Удалена команда "${name}" на сервере ${serverName}, так как она является эксклюзивной для основного сервера.`);
                         continue;
                     }
 
@@ -84,15 +84,15 @@ module.exports = async (client) => {
                     }
                 } else {
                     if (localCommand.deleted){
-                        console.log(`Пропущена регистрация команды "${name}" на сервере ${serverName} так она обозначена на удаление.`)
+                        console.log(`Пропущена регистрация команды "${name}" на сервере ${serverName}, так как она обозначена на удаление.`)
                         continue;
                     }
 
-                    if (localCommand.deletedBoston && serverId === Object.keys(config.servers)[2]){
-                        console.log(`Пропущена регистрация команды "${name}" на сервере ${serverName} из-за ограничений по кадровому аудиту.`);
+                    if (localCommand.mainOnly && serverId !== Object.keys(config.servers)[0]){
+                        console.log(`Пропущена регистрация команды "${name}" на сервере ${serverName}, так как она является эксклюзивной для основного сервера.`);
                         continue;
                     }
-
+                    
                     await applicationCommands.create({
                         name,
                         description,

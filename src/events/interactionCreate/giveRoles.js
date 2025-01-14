@@ -20,13 +20,60 @@ const giveRoles = require('../../models/giveRoles');
 const blackListGiveRoles = require('../../models/blackListGiveRoles');
 const config = require('../../../config.json');
 
+async function editReply(type, interaction, userPing, confirmUserIdMention, invite_nick_mention) {
+    let content;
+    switch(type) {
+        case 1:
+            content = `Заявка ${userPing} одобрена.
+-# Сообщение удалится через 30 секунд.`;
+            break;
+        case 2:
+            content = `${confirmUserIdMention}, вы не являетесь ${invite_nick_mention} для того, чтобы принять заявку!
+-# Сообщение удалится через 30 секунд.`;
+            break;
+        case 3:
+            content = `Заявка ${userPing} отклонена.
+-# Сообщение удалится через 30 секунд.`;
+            break;
+        case 4:
+            content = `${confirmUserIdMention}, вы не являетесь лидером фракции или ${invite_nick_mention} для того, чтобы отклонить заявку!
+-# Сообщение удалится через 30 секунд.`;
+            break;
+        case 5:
+            content = `Пользователь ${userPing} успешно заблокирован!
+-# Сообщение удалится через 30 секунд.`;
+            break;
+        case 6:
+            content = `${confirmUserIdMention}, вы не являетесь лидером фракции для того, чтобы заблокировать пользователя!
+-# Сообщение удалится через 30 секунд.`;
+            break;
+    }
+
+    await interaction.editReply({
+        content: content,
+        ephemeral: true, 
+    });
+
+    setTimeout(async () => {
+        try {
+            await interaction.deleteReply();
+        } catch (error) {
+            console.log(`Не удалось удалить ответ: ${error}`);
+        }
+    }, 30000);
+    return;
+}
+
 module.exports = async (client, interaction) => {
+    if (!interaction.isButton()) return;
+    if (!(interaction.customId === 'role-confirm' ||
+        interaction.customId === 'role-db' ||
+        interaction.customId === 'role-decline' ||
+        interaction.customId === 'role-block')) return;
+
     try {
-        if (!interaction.isButton()) return;
-        if (!(interaction.customId === 'role-confirm' ||
-            interaction.customId === 'role-db' ||
-            interaction.customId === 'role-decline' ||
-            interaction.customId === 'role-block')) return;
+        await interaction.deferReply({ ephemeral: true });
+
         const guildId = interaction.guildId;
         const channel = await client.channels.fetch(config.servers[guildId].confirmRoleChannelId);
         const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
@@ -80,34 +127,32 @@ module.exports = async (client, interaction) => {
                     .setTimestamp()
                     .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
                 message.edit({ embeds: [editedEmbed], components: [] });
-                const roleIds = [weazelNewsRoleId, traineeRoleId];
-                if (interaction.customId === 'role-confirm' && guildId !== Object.keys(config.servers)[2]) roleIds.push(firstRankRoleId);
+                const roleIds = [weazelNewsRoleId];
+                if (interaction.customId === 'role-confirm') roleIds.push(firstRankRoleId, traineeRoleId);
                 if (interaction.customId === 'role-db') {
-                    if (guildId !== Object.keys(config.servers)[2]) roleIds.push(retestingRoleId, thirdRankRoleId);
-                    else roleIds.push(retestingRoleId);
+                    roleIds.push(retestingRoleId, thirdRankRoleId);
+                    if (guildId !== "1249711898744848415") roleIds.push(traineeRoleId);
                 }
                 for (const roleId of roleIds) {
                     const role = guild.roles.cache.get(roleId);
                     if (role) {
                         await member.roles.add(role);
                     } else {
-                        await interaction.reply({
+                        await interaction.editReply({
                             content: `Роль ${roleId} испарилась с лица земли.`,
                             ephemeral: true,
                         });
                     }
                 }
                 let preNickName;
-                if (guildId === Object.keys(config.servers)[2]) preNickName = `Стажер | ${nickname} | ${static}`;
-                else preNickName = `TD | ${nickname} | ${static}`;
+                preNickName = `TD | ${nickname} | ${static}`;
                 let newNickName;
                 if (preNickName.length > 32) {
                     let firstSpace;
                     for (let i = 0; i < nickname.length; i++) {
                         if (nickname[i] === ' ') {
                             firstSpace = i;
-                            if (guildId === Object.keys(config.servers)[2]) preNickName = `Стажер | ${nickname.slice(0, i+2)} | ${static}`;
-                            else newNickName = `TD | ${nickname.slice(0, i+2)}. | ${static}`;
+                            newNickName = `TD | ${nickname.slice(0, i+2)}. | ${static}`;
                             break;
                         }
                     }
@@ -142,20 +187,14 @@ module.exports = async (client, interaction) => {
                     )
                     .setTimestamp()
                     .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
-                if (guildId !== Object.keys(config.servers)[2]) kachannel.send({ embeds: [kainviteEmbed] });
-                await interaction.reply({
-                    content: `Заявка ${userPing} одобрена.`,
-                    ephemeral: true,
-                });
+                kachannel.send({ embeds: [kainviteEmbed] });
+                editReply(1, interaction, userPing, confirmUserIdMention, invite_nick_mention);
                 await member.send(`${userPing}, ${invite_nick_mention} одобрил вашу заявку!
 Добро пожаловать в Weazel News!`);
                 return;
             }
             else {
-                await interaction.reply({
-                    content: `${confirmUserIdMention}, вы не являетесь ${invite_nick_mention} для того, чтобы принять заявку!`,
-                    ephemeral: true,
-                });
+                editReply(2, interaction, userPing, confirmUserIdMention, invite_nick_mention);
                 return;
             }
         }
@@ -178,19 +217,13 @@ module.exports = async (client, interaction) => {
                     .setTimestamp()
                     .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
                 message.edit({ embeds: [editedEmbed], components: [] });
-                await interaction.reply({
-                    content: `Заявка ${userPing} отклонена.`,
-                    ephemeral: true,
-                });
+                editReply(3, interaction, userPing, confirmUserIdMention, invite_nick_mention);
                 await member.send(`${userPing}, к сожалению, ${invite_nick_mention} отклонил вашу заявку.
 Свяжитесь с сотрудником, чтобы выяснить причину.`);
                 return;
             }
             else {
-                await interaction.reply({
-                    content: `${confirmUserIdMention}, вы не являетесь лидером фракции или ${invite_nick_mention} для того, чтобы отклонить заявку!`,
-                    ephemeral: true,
-                });
+                editReply(4, interaction, userPing, confirmUserIdMention, invite_nick_mention);
                 return;
             }
         }
@@ -218,25 +251,22 @@ module.exports = async (client, interaction) => {
                     .setTimestamp()
                     .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
                 message.edit({ embeds: [editedEmbed], components: [] });
-                await interaction.reply({
-                    content: `Пользователь ${userPing} успешно заблокирован!`,
-                });
+                editReply(5, interaction, userPing, confirmUserIdMention, invite_nick_mention);
                 await member.send(`${userPing}, вы были заблокированы за злоупотребление функционалом бота!`);
                 return;
             }
             else {
-                await interaction.reply({
-                    content: `${confirmUserIdMention}, вы не являетесь лидером фракции для того, чтобы заблокировать пользователя!`,
-                    ephemeral: true,
-                })
+                editReply(6, interaction, userPing, confirmUserIdMention, invite_nick_mention);
                 return;
             }
         }
     } catch (error) {
         console.log(`Произошла ошибка при нажатии на кнопку, связанную с выдачей ролей: ${error}.`);
-        await interaction.reply({
-            content: `Произошла ошибка при нажатии на кнопку, связанную с выдачей ролей: ${error}.`,
-            ephemeral: true,
-        });
+        if (!interaction.replied){
+            await interaction.editReply({
+                content: `Произошла ошибка при нажатии на кнопку, связанную с выдачей ролей: ${error}`,
+                ephemeral: true,
+            });
+        }
     }
 };

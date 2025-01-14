@@ -27,7 +27,7 @@ module.exports = {
     botPermissions: [PermissionFlagsBits.ManageRoles],
 
     callback: async (client, interaction) => {
-        const channel = await client.channels.fetch('1269379781187604561');
+        const channel = await client.channels.fetch('1293910674283696169');
         
         const row = new ActionRowBuilder();
 

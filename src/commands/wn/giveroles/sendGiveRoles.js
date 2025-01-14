@@ -20,6 +20,42 @@ const config = require('../../../../config.json');
 const giveRoles = require('../../../models/giveRoles');
 const blackListGiveRoles = require('../../../models/blackListGiveRoles');
 
+async function editReply(type, interaction, userPing, inviteUserMention) {
+    let content;
+    switch(type) {
+        case 1:
+            content = `Действие невозможно. Вы попали в чёрный список выдачи ролей.
+-# Сообщение удалится через 30 секунд.`;
+            break;
+        case 2:
+            content = `${userPing}, вы уже отправляли заявку!
+Ожидайте, пока сотрудник ${inviteUserMention} её рассмотрит.
+Вы получите оповещение как только получите роли.
+-# Сообщение удалится через 30 секунд.`
+            break;
+        case 3:
+            content = `Спасибо, ${userPing}, ваша заявка принята!
+Ожидайте, пока сотрудник ${inviteUserMention} её рассмотрит.
+Вы получите оповещение как только получите роли.
+-# Сообщение удалится через 30 секунд.`
+            break;
+    }
+
+    await interaction.editReply({
+        content: content,
+        ephemeral: true, 
+    });
+
+    setTimeout(async () => {
+        try {
+            await interaction.deleteReply();
+        } catch (error) {
+            console.log(`Не удалось удалить ответ: ${error}`);
+        }
+    }, 30000);
+    return;
+}
+
 module.exports = {
     name: 'sendgr',
     description: 'Отправляет заявку на выдачу ролей стажировки.',
@@ -49,6 +85,8 @@ module.exports = {
     botPermissions: [PermissionFlagsBits.ManageRoles, PermissionFlagsBits.ChangeNickname],
 
     callback: async (client, interaction) => {
+        await interaction.deferReply({ ephemeral: true });
+
         const guildId = interaction.guildId;
         const userId = interaction.user.id;
         const userPing = await client.users.fetch(userId);
@@ -67,19 +105,11 @@ module.exports = {
             const ifGiveRoles = await giveRoles.findOne(query);
             const ifBlackListGiveRoles = await blackListGiveRoles.findOne(query);
             if (ifBlackListGiveRoles) {
-                await interaction.reply({
-                    content: 'Действие невозможно. Вы попали в чёрный список выдачи ролей.',
-                    ephemeral: true,
-                });
+                editReply(1, interaction, userPing, inviteUserMention);
                 return;
             }
             if (ifGiveRoles) {
-                await interaction.reply({
-                    content: `${userPing}, вы уже отправляли заявку!
-Ожидайте, пока сотрудник Weazel News её примет.
-Вы получите оповещение как только получите роли.`,
-                    ephemeral: true,
-                });
+                editReply(2, interaction, userPing, inviteUserMention);
                 return;
             }
             else {
@@ -146,20 +176,17 @@ module.exports = {
 
                 await newGiveRoles.save();
 
-                await interaction.reply({
-                    content: `Спасибо, ${userPing}, ваша заявка принята!
-Ожидайте, пока сотрудник ${inviteUserMention} её примет.
-Вы получите оповещение как только получите роли.`,
-                    ephemeral: true,
-                });
+                editReply(3, interaction, userPing, inviteUserMention);
                 return;
             }
         } catch (error) {
             console.log(`Произошла ошибка при публикации заявки для выдачей ролей: ${error}.`);
-            await interaction.reply({
-                content: `Произошла ошибка при публикации заявки для выдачей ролей: ${error}.`,
-                ephemeral: true,
-            });
+            if (!interaction.replied){
+                await interaction.editReply({
+                    content: `Произошла ошибка при публикации заявки для выдачей ролей: ${error}.`,
+                    ephemeral: true,
+                });
+            }
         }
     },
 };

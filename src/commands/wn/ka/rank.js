@@ -18,12 +18,45 @@
 const config = require('../../../../config.json');
 const { Client, Interaction, ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
+async function editReply(type, interaction, member, kachannel) {
+    let content;
+    switch(type) {
+        case 1:
+            content = `Вы указали пользователя, которому хотите изменить ранг, не пингом.
+Укажите переменную "static" для того, чтобы команда сработала.
+-# Сообщение удалится через 30 секунд.`;
+            break;
+        case 2:
+            content = `Невозможно определить статик.
+Укажите переменную "static" для того, чтобы команда сработала.
+-# Сообщение удалится через 30 секунд.`
+            break;
+        case 3:
+            content = `Отпись кадрового аудита на изменение ранга ${member} успешно создана в канале ${kachannel}!
+-# Сообщение удалится через 30 секунд.`
+            break;
+    }
+
+    await interaction.editReply({
+        content: content,
+        ephemeral: true, 
+    });
+
+    setTimeout(async () => {
+        try {
+            await interaction.deleteReply();
+        } catch (error) {
+            console.log(`Не удалось удалить ответ: ${error}`);
+        }
+    }, 30000);
+    return;
+}
+
 module.exports = {
     name: 'rank',
     description: 'Изменение ранга игроку во фракции.',
     //devOnly: Boolean
     //testOnly: Boolean
-    deletedBoston: true,
     options: [
         {
             name: 'member',
@@ -53,90 +86,90 @@ module.exports = {
     botPermissions: [PermissionFlagsBits.ManageRoles],
 
     callback: async (client, interaction) => {
-        const guildId = interaction.guildId;
+        try {
+            await interaction.deferReply({ ephemeral: true });
+            const guildId = interaction.guildId;
 
-        const guild = await client.guilds.fetch(guildId);
+            const guild = await client.guilds.fetch(guildId);
 
-        const userId = interaction.user.id;
-        const userPing = await guild.members.fetch(userId);
+            const userId = interaction.user.id;
+            const userPing = await guild.members.fetch(userId);
 
-        const userNick = userPing.displayName;
-        const testmember = interaction.options.getString('member');
-        const memberId = testmember.replace(/[<@!>]/g, '');
-        let memberNick;
-        let member;
-        if (testmember === memberId) {
-            member = testmember;
-            static = interaction.options.get('static')?.value || 'Null';
-            memberNick = 'Null';
-            if (static === 'Null') {
-                await interaction.reply({
-                    content: `Вы указали пользователя, которому хотите изменить ранг не пингом.
-Укажите переменную "static" для того, чтобы команда сработала.`,
-                    ephemeral: true,
-                });
-                return;
-            }
-        }
-        else {
-            member = await guild.members.fetch(memberId);
-
-            memberNick = member.displayName;
-            const match = memberNick.match(/(\d+)$/);
-            if (match) static = match[1];
-            else {
+            const userNick = userPing.displayName;
+            const testmember = interaction.options.getString('member');
+            const memberId = testmember.replace(/[<@!>]/g, '');
+            let memberNick;
+            let member;
+            if (testmember === memberId) {
+                member = testmember;
                 static = interaction.options.get('static')?.value || 'Null';
+                memberNick = 'Null';
                 if (static === 'Null') {
-                    await interaction.reply({
-                        content: `Невозможно определить статик.
-Укажите переменную "static" для того, чтобы команда сработала.`,
-                        ephemeral: true,
-                    });
+                    editReply(1, interaction, member, kachannel);
                     return;
                 }
             }
-        }
-        const action = interaction.options.getString('action');
-        const reason = interaction.options.getString('reason');
-        const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
+            else {
+                member = await guild.members.fetch(memberId);
 
-        const channel = interaction.channel;
-        const rankEmbed = new EmbedBuilder()
-            .setColor(0x2ECC70)
-            .setTitle('Кадровый аудит • Изменение ранга')
-            .addFields(
-                { name: 'Обновил(-а):', value: `${userPing} | ${userNick} | ||${userId}||` },
-            )
-            .setTimestamp()
-            .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
-        if (memberNick === 'Null') {
+                memberNick = member.displayName;
+                const match = memberNick.match(/(\d+)$/);
+                if (match) static = match[1];
+                else {
+                    static = interaction.options.get('static')?.value || 'Null';
+                    if (static === 'Null') {
+                        editReply(2, interaction, member, kachannel);
+                        return;
+                    }
+                }
+            }
+            const action = interaction.options.getString('action');
+            const reason = interaction.options.getString('reason');
+            const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
+
+            const channel = interaction.channel;
+            const rankEmbed = new EmbedBuilder()
+                .setColor(0x2ECC70)
+                .setTitle('Кадровый аудит • Изменение ранга')
+                .addFields(
+                    { name: 'Обновил(-а):', value: `${userPing} | ${userNick} | ||${userId}||` },
+                )
+                .setTimestamp()
+                .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+            if (memberNick === 'Null') {
+                rankEmbed.addFields(
+                    { name: 'Обновлен(-а):', value: `${member}` },
+                )
+            }
+            else {
+                rankEmbed.addFields(
+                    { name: 'Обновлен(-а):', value: `${member} | ${memberNick} | ||${memberId}||` },
+                )
+            }
             rankEmbed.addFields(
-                { name: 'Обновлен(-а):', value: `${member}` },
+                { name: 'Номер ID карты:', value: `${static}`, inline: true },
+                { name: 'Действие:', value: `${action}`, inline: true },
+                { name: 'Причина:', value: `${reason}`},
             )
+            kachannel.send({ embeds: [rankEmbed] });
+            if (kachannel === channel) {
+                await interaction.editReply({
+                    content: 'Meow!',
+                    ephemeral: true,
+                });
+                await interaction.deleteReply();
+            } else {
+                editReply(3, interaction, member, kachannel);
+            }
+            return;
+        } catch (error) {
+            console.log(`Произошла ошибка отписи изменения ранга в КА: ${error}`);
+            if (!interaction.replied) {
+                await interaction.editReply({
+                    content: `Произошла ошибка изменения ранга в КА: ${error}`,
+                    ephemeral: true,
+                });
+            }
         }
-        else {
-            rankEmbed.addFields(
-                { name: 'Обновлен(-а):', value: `${member} | ${memberNick} | ||${memberId}||` },
-            )
-        }
-        rankEmbed.addFields(
-            { name: 'Номер ID карты:', value: `${static}`, inline: true },
-            { name: 'Действие:', value: `${action}`, inline: true },
-            { name: 'Причина:', value: `${reason}`},
-        )
-        kachannel.send({ embeds: [rankEmbed] });
-        if (kachannel === channel) {
-            await interaction.reply({
-                content: 'Meow!',
-                ephemeral: true,
-            });
-            await interaction.deleteReply();
-        } else {
-            await interaction.reply({
-                content: `Отпись кадрового аудита на изменение ранга ${member} успешно создана в канале ${kachannel}!`,
-                ephemeral: true,
-            });
-        }
-        return;
     },
 }

@@ -36,6 +36,8 @@ module.exports = {
 
     callback: async (client, interaction) => {
         try {
+            await interaction.deferReply({ ephemeral: true });
+
             const guildId = interaction.guildId;
 
             const leaderRoleId = config.servers[guildId].leaderRoleId;
@@ -52,22 +54,24 @@ module.exports = {
 \`invite-nick\` - тег сотрудника, который вас принимал.
 Сотрудники Weazel News не примут вашу заявку на выдачу ролей, если она была составлена не по форме.
 
-В случае, если вам нужны особенные роли, к примеру, МК или лидера/зам. лидера гос. фракции, обратитесь напрямую в личные сообщения лидеру WN с ролью <@&${leaderRoleId}>.
+Если вам нужны особенные роли (МК, лидера/зам. лидера и т.п.), обратитесь напрямую в личные сообщения лидеру WN с ролью <@&${leaderRoleId}>.
 Если же вы новый куратор фракции, пинганите ГК или ЗГА в ${citizenChannel}.
 -# WN Helper by Michael Lindberg. Discord: milkgames`
             );
 
-            await interaction.reply({
+            await interaction.editReply({
                 content: `Сообщение создано успешно в канале ${channel}!`,
                 ephemeral: true,
             });
             return;
         } catch (error) {
             console.log(`Произошла ошибка при создании сообщения с выдачей ролей: ${error}`);
-            await interaction.reply({
-                content: `Произошла ошибка при создании сообщения с выдачей ролей: ${error}`,
-                ephemeral: true,
-            });
+            if (!interaction.replied) {
+                await interaction.editReply({
+                    content: `Произошла ошибка при создании сообщения с выдачей ролей: ${error}`,
+                    ephemeral: true,
+                });
+            }
         }
     },
 };

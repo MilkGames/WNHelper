@@ -32,7 +32,7 @@ module.exports = async (client, interaction) => {
 
         if (commandObject.devOnly){
             if (!devs.includes(interaction.member.id)){
-                interaction.reply({
+                await interaction.reply({
                     content: 'Данная команда доступна только для разработчиков!',
                     ephemeral: true,
                 });
@@ -42,7 +42,7 @@ module.exports = async (client, interaction) => {
 
         if (commandObject.testOnly){
             if (!(interaction.guild.id === testServer)){
-                interaction.reply({
+                await interaction.reply({
                     content: `Данная команда доступна только на тестовом сервере!`,
                     ephemeral: true,
                 });
@@ -53,7 +53,7 @@ module.exports = async (client, interaction) => {
         if (commandObject.permissionsRequired?.length){
             for (const permission of commandObject.permissionsRequired){
                 if (!interaction.member.permissions.has(permission)){
-                    interaction.reply({
+                    await interaction.reply({
                         content: "У вас недостаточно прав для запуска данной команды.",
                         ephemeral: true,
                     });
@@ -66,7 +66,7 @@ module.exports = async (client, interaction) => {
             for (const permission of commandObject.botPermissions){
                 const bot = interaction.guild.members.me;
                 if (!bot.permissions.has(permission)){
-                    interaction.reply({
+                    await interaction.reply({
                         content: "У меня недостаточно прав для запуска данной команды...",
                         ephemeral: true,
                     });
@@ -77,6 +77,5 @@ module.exports = async (client, interaction) => {
         await commandObject.callback(client, interaction);
     } catch (error) {
         console.log(`Произошла общая ошибка при запуске команды: ${error}`);
-        await interaction.reply(`Произошла общая ошибка при запуске команды: ${error}.`);
     }
 };

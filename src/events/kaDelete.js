@@ -31,7 +31,7 @@ module.exports = {
         if (reaction.emoji.name !== targetEmoji) return;
         const messageId = reaction.message.id;
         const messageLink = `https://discord.com/channels/${guildId}/${targetChannelId}/${messageId}`;
-        kaDeleteChannel.send(`<@${config.servers[guildId].leaderId}>, новая заявка на удаление записи из кадрового аудита!
+        kaDeleteChannel.send(`<@&${config.servers[guildId].leaderRoleId}>, новая заявка на удаление записи из кадрового аудита!
 Ссылка на сообщение: ${messageLink}`);
         return;
     },
