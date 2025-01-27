@@ -55,6 +55,7 @@ module.exports = async (client) => {
             const headJDRoleId = config.servers[serverId].headJDRoleId;
             const depLeaderRoleId = config.servers[serverId].depLeaderRoleId;
             const leaderRoleId = config.servers[serverId].leaderRoleId;
+            const traineeRoleId = config.servers[serverId].traineeRoleId;
             if (rddChannelId && amdChannelId && edChannelId && jdChannelId) {
                 const guild = client.guilds.cache.get(serverId);
                 const rddChannel = await client.channels.fetch(rddChannelId);
@@ -162,19 +163,23 @@ module.exports = async (client) => {
                         member.roles.cache.has(RDDRoleId) &&
                         !member.roles.cache.has(headRDDRoleId) &&
                         !member.roles.cache.has(depHeadRDRoleId) &&
-                        !member.roles.cache.has(depHeadDDRoleId));
+                        !member.roles.cache.has(depHeadDDRoleId) &&
+                        !member.roles.cache.has(traineeRoleId));
                     AMD = members.filter(member => 
                         member.roles.cache.has(AMDRoleId) &&
                         !member.roles.cache.has(headAMDRoleId) &&
-                        !member.roles.cache.has(depHeadAMDRoleId));
+                        !member.roles.cache.has(depHeadAMDRoleId) &&
+                        !member.roles.cache.has(traineeRoleId));
                     ED = members.filter(member => 
                         member.roles.cache.has(EDRoleId) &&
                         !member.roles.cache.has(headEDRoleId) &&
-                        !member.roles.cache.has(depHeadEDRoleId));
+                        !member.roles.cache.has(depHeadEDRoleId) &&
+                        !member.roles.cache.has(traineeRoleId));
                     JD = members.filter(member => 
                         member.roles.cache.has(JDRoleId) &&
                         !member.roles.cache.has(headJDRoleId) &&
-                        !member.roles.cache.has(depHeadJDRoleId));
+                        !member.roles.cache.has(depHeadJDRoleId) &&
+                        !member.roles.cache.has(traineeRoleId));
 
                     rddEmbed.addFields(
                         { name: "**\nОсновной состав:\n**", value: " " },
