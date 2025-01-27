@@ -16,7 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 const config = require('../../../../config.json');
-const { Client, Interaction, ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 async function editReply(type, interaction, member, kachannel) {
     let content;
@@ -24,15 +24,22 @@ async function editReply(type, interaction, member, kachannel) {
         case 1:
             content = `Вы указали пользователя, которому хотите изменить ранг, не пингом.
 Укажите переменную "static" для того, чтобы команда сработала.
+Если вы используете контекстную команду, то бот не смог считать ID дискорда из сообщения.
+Проверьте сообщение, которое вы используете для отписи изменения ранга.
 -# Сообщение удалится через 30 секунд.`;
             break;
         case 2:
             content = `Невозможно определить статик.
 Укажите переменную "static" для того, чтобы команда сработала.
+Если вы используете контекстную команду, то бот не смог считать статик из никнейма сотрудника.
 -# Сообщение удалится через 30 секунд.`
             break;
         case 3:
             content = `Отпись кадрового аудита на изменение ранга ${member} успешно создана в канале ${kachannel}!
+-# Сообщение удалится через 30 секунд.`
+            break;
+        case 4:
+            content = `Повышение на старший состав оформляют исключительно лидер и заместитель лидера фракции.
 -# Сообщение удалится через 30 секунд.`
             break;
     }
@@ -49,6 +56,14 @@ async function editReply(type, interaction, member, kachannel) {
             console.log(`Не удалось удалить ответ: ${error}`);
         }
     }, 30000);
+    return;
+}
+
+async function changeRank(member, oldRank, newRank) {
+    const newRole = member.guild.roles.cache.get(newRank);
+    if (newRole) await member.roles.add(newRole);
+    const oldRole = member.guild.roles.cache.get(oldRank);
+    if (oldRole) await member.roles.remove(oldRole);
     return;
 }
 
@@ -98,6 +113,8 @@ module.exports = {
             const userNick = userPing.displayName;
             const testmember = interaction.options.getString('member');
             const memberId = testmember.replace(/[<@!>]/g, '');
+            const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
+
             let memberNick;
             let member;
             if (testmember === memberId) {
@@ -125,7 +142,70 @@ module.exports = {
             }
             const action = interaction.options.getString('action');
             const reason = interaction.options.getString('reason');
-            const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
+            const rank = parseInt(action.match(/\d$/));
+
+            const depLeaderRoleId = config.servers[guildId].depLeaderRoleId;
+
+            if (rank > 7 && !member.roles.cache.has(depLeaderRoleId)) {
+                editReply(4, interaction, member, kachannel);
+                return;
+            }
+            if (member.nickname && guildId == Object.keys(config.servers)[2]) {
+                switch (rank) {
+                    case 2:
+                        await changeRank(member, config.servers[guildId].firstRankRoleId, config.servers[guildId].secondRankRoleId);
+                        break;
+                    case 3:
+                        await changeRank(member, config.servers[guildId].secondRankRoleId, config.servers[guildId].thirdRankRoleId);
+                        const TDRole = member.guild.roles.cache.get(config.servers[guildId].traineeRoleId);
+                        if (TDRole) await member.roles.remove(TDRole);
+                        let prefix = "";
+                        if (member.roles.cache.has(config.servers[guildId].RDDRoleId)) prefix = "RD";
+                        if (member.roles.cache.has(config.servers[guildId].AMDRoleId)) prefix = "AMD";
+                        if (member.roles.cache.has(config.servers[guildId].EDRoleId)) prefix = "ED";
+                        if (member.roles.cache.has(config.servers[guildId].JDRoleId)) prefix = "JD";
+                        let baseNickName = memberNick.split('|')[1].trim();
+                        let preNickName = `${prefix} | ${baseNickName} | ${static}`;
+                        let newNickName;
+                        if (preNickName.length > 32) {
+                            let firstSpace;
+                            for (let i = 0; i < baseNickName.length; i++) {
+                                if (baseNickName[i] === ' ') {
+                                    firstSpace = i;
+                                    newNickName = `${prefix} | ${baseNickName.slice(0, i+2)}. | ${static}`;
+                                    break;
+                                }
+                            }
+                        }
+                        else {
+                            newNickName = preNickName;
+                        }
+                        try {
+                            member.setNickname(`${newNickName}`);
+                        } catch (error) {
+                            console.log(`Ещё один чел поставил ник больше 32 символов. ${error}`);
+                        }
+                        break;
+                    case 4:
+                        await changeRank(member, config.servers[guildId].thirdRankRoleId, config.servers[guildId].fourthRankRoleId);
+                        break;
+                    case 5:
+                        await changeRank(member, config.servers[guildId].fourthRankRoleId, config.servers[guildId].fifthRankRoleId);
+                        break;
+                    case 6:
+                        await changeRank(member, config.servers[guildId].fifthRankRoleId, config.servers[guildId].sixthRankRoleId);
+                        break;
+                    case 7:
+                        await changeRank(member, config.servers[guildId].sixthRankRoleId, config.servers[guildId].seventhRankRoleId);
+                        break;
+                    case 8:
+                        await changeRank(member, config.servers[guildId].seventhRankRoleId, config.servers[guildId].eighthRankRoleId);
+                        break;
+                    case 9:
+                        await changeRank(member, config.servers[guildId].eighthRankRoleId, config.servers[guildId].depLeaderRoleId);
+                        break;
+                }
+            }
 
             const channel = interaction.channel;
             const rankEmbed = new EmbedBuilder()
@@ -152,6 +232,7 @@ module.exports = {
                 { name: 'Причина:', value: `${reason}`},
             )
             kachannel.send({ embeds: [rankEmbed] });
+
             if (kachannel === channel) {
                 await interaction.editReply({
                     content: 'Meow!',

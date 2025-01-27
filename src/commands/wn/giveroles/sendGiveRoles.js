@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-const { Client, Interaction, ApplicationCommandOptionType, EmbedBuilder, PermissionFlagsBits, ButtonBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
+const { ApplicationCommandOptionType, EmbedBuilder, PermissionFlagsBits, ButtonBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
 const config = require('../../../../config.json');
 const giveRoles = require('../../../models/giveRoles');
 const blackListGiveRoles = require('../../../models/blackListGiveRoles');
@@ -39,6 +39,10 @@ async function editReply(type, interaction, userPing, inviteUserMention) {
 Вы получите оповещение как только получите роли.
 -# Сообщение удалится через 30 секунд.`
             break;
+        case 4:
+            content = `Вы не использовали пробел или использовали знак _ в вашем никнейме.
+Укажите корректный ник, который отображается у вас в игре.
+-# Сообщение удалится через 30 секунд.`
     }
 
     await interaction.editReply({
@@ -101,6 +105,11 @@ module.exports = {
             userId: userId,
         };
 
+        if (nickname.includes('_') || !nickname.includes(' ')) {
+            editReply(4, interaction, userPing, inviteUserMention);
+            return;
+        }
+        
         try {
             const ifGiveRoles = await giveRoles.findOne(query);
             const ifBlackListGiveRoles = await blackListGiveRoles.findOne(query);

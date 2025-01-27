@@ -15,11 +15,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-const { Client, Interaction, IntentsBitField, ActivityType, EmbedBuilder, MessageReaction, ActionRowBuilder, ThreadAutoArchiveDuration } = require('discord.js');
+const { ActionRowBuilder } = require('discord.js');
 const config = require('../../../config.json');
 const amdShifts = require('../../models/amdShifts');
 
-async function editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest) {
+async function editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest) {
     let content;
     if (badRequest) {
         content = `${userIdMention}, вы не являетесь человеком в смене или <@&${headAMDRoleId}> для того, чтобы убрать ${currentMemberMention} смены!
@@ -159,7 +159,7 @@ module.exports = async (client, interaction) => {
                     break;
                 }
                 badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest);
+                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
                 enableButtons(message);
                 return;
             case 'shift-two':
@@ -176,7 +176,7 @@ module.exports = async (client, interaction) => {
                     break;
                 }
                 badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest);
+                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
                 enableButtons(message);
                 return;
             case 'shift-three':
@@ -193,7 +193,7 @@ module.exports = async (client, interaction) => {
                     break;
                 }
                 badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest);
+                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
                 enableButtons(message);
                 return;
             case 'shift-four':
@@ -210,7 +210,7 @@ module.exports = async (client, interaction) => {
                     break;
                 }
                 badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest);
+                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
                 enableButtons(message);
                 return;
             case 'shift-five':
@@ -227,7 +227,7 @@ module.exports = async (client, interaction) => {
                     break;
                 }
                 badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest);
+                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
                 enableButtons(message);
                 return;
             case 'shift-six':
@@ -244,7 +244,7 @@ module.exports = async (client, interaction) => {
                     break;
                 }
                 badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest);
+                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
                 enableButtons(message);
                 return;
             case 'shift-seven':
@@ -261,7 +261,7 @@ module.exports = async (client, interaction) => {
                     break;
                 }
                 badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest);
+                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
                 enableButtons(message);
                 return;
             case 'shift-eight':
@@ -278,7 +278,7 @@ module.exports = async (client, interaction) => {
                     break;
                 }
                 badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest);
+                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
                 enableButtons(message);
                 return;
         }
@@ -333,7 +333,7 @@ ${pingRoles}
         await message.edit({ content: content });
 
         threadEdit(message, shiftNumber, formattedDate, currentMember, currentMemberMention, userId, userIdMention, deleted);
-        editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, deleted, badRequest);
+        editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
         enableButtons(message);
         return;
     } catch (error) {

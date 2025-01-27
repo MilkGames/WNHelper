@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-const { Client, Interaction, IntentsBitField, ActivityType, EmbedBuilder, MessageReaction } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 const giveRoles = require('../../models/giveRoles');
 const blackListGiveRoles = require('../../models/blackListGiveRoles');
 const config = require('../../../config.json');
@@ -75,29 +75,44 @@ module.exports = async (client, interaction) => {
         await interaction.deferReply({ ephemeral: true });
 
         const guildId = interaction.guildId;
+        const guild = await client.guilds.fetch(guildId);
         const channel = await client.channels.fetch(config.servers[guildId].confirmRoleChannelId);
         const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
         const messageId = interaction.message.id;
         const message = await channel.messages.fetch(messageId);
         const confirmUserId = interaction.user.id;
-        const confirmUserIdMention = await client.users.fetch(confirmUserId);
+        const confirmUserIdMention = await guild.members.fetch(confirmUserId);
 
         const query = {
             guildId: guildId,
             messageId: messageId,
         };
 
-        const guild = await client.guilds.fetch(guildId);
         const giveRolesList = await giveRoles.findOne(query);
-        const userId = giveRolesList.userId;
-        const userPing = await client.users.fetch(userId);
         const nickname = giveRolesList.nickname;
         const static = giveRolesList.static;
         const invite_nick = giveRolesList.invite_nick;
-        const invite_nick_mention = await client.users.fetch(invite_nick);
         const invite_nick_fetch = await guild.members.fetch(invite_nick);
         const invite_nick_nickname = invite_nick_fetch.displayName;
-        const member = await guild.members.fetch(userId);
+        const userId = giveRolesList.userId;
+        let userPing;
+        try {
+            userPing = await client.users.fetch(userId);
+        } catch (error) {
+            userPing = userId;
+        }
+        let invite_nick_mention;
+        try {
+            invite_nick_mention = await client.users.fetch(invite_nick);
+        } catch (error) {
+            invite_nick_mention = invite_nick;
+        }
+        let member
+        try {
+            member = await guild.members.fetch(userId);
+        } catch (error) {
+            member = userId;
+        }
         const weazelNewsRoleId = config.servers[guildId].weazelNewsRoleId;
         const traineeRoleId = config.servers[guildId].traineeRoleId;
         const firstRankRoleId = config.servers[guildId].firstRankRoleId;
@@ -105,10 +120,8 @@ module.exports = async (client, interaction) => {
         const retestingRoleId = config.servers[guildId].retestingRoleId;
         const leaderRoleId = config.servers[guildId].leaderRoleId;
         let isLeader;
-
-        if (member.roles.cache.has(leaderRoleId)) isLeader = true;
+        if (confirmUserIdMention.roles.cache.has(leaderRoleId)) isLeader = true;
         else isLeader = false;
-
         if (interaction.customId === 'role-confirm' || interaction.customId === 'role-db') {
             if (confirmUserId === invite_nick || isLeader || config.devs.includes(confirmUserId)) {
                 await giveRoles.deleteOne(query);
@@ -127,6 +140,7 @@ module.exports = async (client, interaction) => {
                     .setTimestamp()
                     .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
                 message.edit({ embeds: [editedEmbed], components: [] });
+                if (userPing === userId || invite_nick_mention === invite_nick || member === userId) return;
                 const roleIds = [weazelNewsRoleId];
                 if (interaction.customId === 'role-confirm') roleIds.push(firstRankRoleId, traineeRoleId);
                 if (interaction.customId === 'role-db') {
@@ -144,6 +158,8 @@ module.exports = async (client, interaction) => {
                         });
                     }
                 }
+                const citizenRole = guild.roles.cache.get(config.servers[guildId].citizenRoleId);
+                if (userPing.roles.cache.has(citizenRole)) await userPing.roles.remove(citizenRole);
                 let preNickName;
                 preNickName = `TD | ${nickname} | ${static}`;
                 let newNickName;
@@ -218,6 +234,7 @@ module.exports = async (client, interaction) => {
                     .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
                 message.edit({ embeds: [editedEmbed], components: [] });
                 editReply(3, interaction, userPing, confirmUserIdMention, invite_nick_mention);
+                if (userPing === userId || invite_nick_mention === invite_nick || member === userId) return;
                 await member.send(`${userPing}, к сожалению, ${invite_nick_mention} отклонил вашу заявку.
 Свяжитесь с сотрудником, чтобы выяснить причину.`);
                 return;
@@ -252,6 +269,7 @@ module.exports = async (client, interaction) => {
                     .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
                 message.edit({ embeds: [editedEmbed], components: [] });
                 editReply(5, interaction, userPing, confirmUserIdMention, invite_nick_mention);
+                if (userPing === userId || invite_nick_mention === invite_nick || member === userId) return;
                 await member.send(`${userPing}, вы были заблокированы за злоупотребление функционалом бота!`);
                 return;
             }

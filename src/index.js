@@ -16,7 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 require('dotenv').config();
-const { Client, IntentsBitField, Partials, Events } = require('discord.js');
+const { Client, IntentsBitField, Partials } = require('discord.js');
 const mongoose = require('mongoose');
 const eventHandler = require('./handlers/eventHandler');
 const kaDelete = require('./events/kaDelete');
@@ -32,7 +32,7 @@ const client = new Client({
     partials: [
         Partials.Message,
         Partials.Reaction,
-        Partials.Channel,
+        Partials.Channel
     ]
 });
 

@@ -16,7 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 const config = require('../../../../config.json');
-const { Client, Interaction, ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 async function editReply(type, interaction, member, kachannel) {
     let content;
@@ -24,11 +24,14 @@ async function editReply(type, interaction, member, kachannel) {
         case 1:
             content = `Вы указали пользователя, которого хотите уволить, не пингом.
 Укажите переменную "static" для того, чтобы команда сработала.
+Если вы используете контекстную команду, то бот не смог считать ID дискорда из сообщения.
+Проверьте сообщение, которое вы используете для увольнения сотрудника.
 -# Сообщение удалится через 30 секунд.`;
             break;
         case 2:
             content = `Невозможно определить статик.
 Укажите переменную "static" для того, чтобы команда сработала.
+Если вы используете контекстную команду, то бот не смог считать статик из никнейма сотрудника.
 -# Сообщение удалится через 30 секунд.`
             break;
         case 3:
@@ -89,6 +92,7 @@ module.exports = {
             const userNick = userPing.displayName;
             const testmember = interaction.options.getString('member');
             const memberId = testmember.replace(/[<@!>]/g, '');
+            const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
             let memberNick;
             let member;
             if (testmember === memberId) {
@@ -109,9 +113,10 @@ module.exports = {
                     const roleToKeep1 = config.servers[guildId].citizenRoleId;
                     const roleToKeep2 = config.servers[guildId].luckerRoleId;
                     const roleToKeep3 = config.servers[guildId].WNLegendRoleId;
+                    const roleToKeep4 = config.servers[guildId].WNLegendx2RoleId;
 
                     const rolesToRemove = member.roles.cache.filter(role => 
-                        role.id !== roleToKeep1 && role.id !== roleToKeep2 && role.id !== roleToKeep3 && role.id !== interaction.guild.id
+                        role.id !== roleToKeep1 && role.id !== roleToKeep2 && role.id !== roleToKeep3 && role.id !== roleToKeep4 && role.id !== guildId
                     );
 
                     await member.roles.remove(rolesToRemove);
@@ -134,7 +139,6 @@ module.exports = {
                 }
             }
             const reason = interaction.options.getString('reason');
-            const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
             const channel = interaction.channel;
             const uvalEmbed = new EmbedBuilder()
                 .setColor(0xFF2C2C)

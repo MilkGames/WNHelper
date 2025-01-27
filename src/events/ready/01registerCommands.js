@@ -27,6 +27,9 @@ module.exports = async (client) => {
         new ContextMenuCommandBuilder()
             .setName('Повысить по отчёту')
             .setType(ApplicationCommandType.Message),
+        new ContextMenuCommandBuilder()
+            .setName('Уволить по заявлению')
+            .setType(ApplicationCommandType.Message),
     ];
 
     const rest = new REST().setToken(process.env.token);

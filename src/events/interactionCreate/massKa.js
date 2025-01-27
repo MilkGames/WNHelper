@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-const { Client, Interaction, IntentsBitField, ActivityType, EmbedBuilder, MessageReaction } = require('discord.js');
+const {} = require('discord.js');
 const inviteCommand = require('../../commands/wn/ka/invite');
 
 module.exports = async (client, interaction) => {

@@ -16,7 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 const config = require('../../../../config.json');
-const { Client, Interaction, ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder, ButtonBuilder } = require('discord.js');
+const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 module.exports = {
     name: 'createkainfo',
@@ -116,13 +116,8 @@ module.exports = {
                 .setDescription(`\`\`\`Повышение сотрудников по отчёту\`\`\`
 У бота есть функционал для мгновенного повышения сотрудников по отчёту на повышение.
 Для этого необходимо нажать правой кнопкой мыши по **отчёту** сотрудника, выбрать **Приложения** и нажать на кнопку **Повысить по отчёту**.
-В всплывающем окне необходимо ввести изменение ранга, к примеру: **4-5** и нажать на **Отправить**.
 Бот автоматически за вас заполнит кадровый аудит и сам подберёт переменные, которые ему нужны для кадрового аудита.
-
-**Важное примечание:**
-
-Ограничение ввода в поле **Введите изменение ранга:** - 5 символов.
-Бот автоматически заполнит строку как **Повышен [ваша строка]**.`);
+Также бот сам за вас поставит галочку на отчёте на повышение.`);
 
             const uvalEmbed = new EmbedBuilder()
                 .setColor(0xFF2C2C)
@@ -159,6 +154,14 @@ module.exports = {
 Также вам не нужно отправлять данную команду в канале кадрового аудита.
 Кадровый аудит автоматически заполнится в том канале, в котором необходимо.`);
 
+            const uvalReportEmbed = new EmbedBuilder()
+                .setColor(0xFF2C2C)
+                .setDescription(`\`\`\`Увольнение сотрудников по заявлению\`\`\`
+У бота есть функционал для мгновенного увольнения сотрудников по заявлению на увольнение.
+Для этого необходимо нажать правой кнопкой мыши по **заявлению на увольнение** сотрудника, выбрать **Приложения** и нажать на кнопку **Уволить по заявлению**.
+Бот автоматически за вас заполнит кадровый аудит и сам подберёт переменные, которые ему нужны для кадрового аудита.
+Также бот сам за вас поставит галочку на заявлении на увольнение.`);
+
             const deleteEmbed = new EmbedBuilder()
                 .setColor(0xFF2C2C)
                 .setDescription(`\`\`\`Удаление записи из кадрового аудита\`\`\`
@@ -166,7 +169,7 @@ module.exports = {
 Лидеру фракции в отдельном канале придёт пинг с запросом на удаление записи из кадрового аудита.`)
                 .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
 
-            const embeds = [inviteEmbed, rankEmbed, rankReportEmbed, uvalEmbed, deleteEmbed];
+            const embeds = [inviteEmbed, rankEmbed, rankReportEmbed, uvalEmbed, uvalReportEmbed, deleteEmbed];
 
             await channel.send({ embeds: embeds });
             await interaction.editReply({

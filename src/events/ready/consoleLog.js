@@ -15,11 +15,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-const { Client, IntentsBitField, ActivityType, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
+const { ActivityType } = require('discord.js');
 
 module.exports = async (client) => {
     console.log(`Бот ${client.user.username} онлайн!`);
-
+    
     let techMaintenance = false;
 
     let status = [
@@ -30,7 +30,7 @@ module.exports = async (client) => {
             name: 'Majestic RP',
         },
         {
-            name: 'Версия 1.11',
+            name: 'Версия 1.2',
             type: ActivityType.Custom,
         },
         {
@@ -74,6 +74,14 @@ module.exports = async (client) => {
             name: 'Тех. обслуживание 🔧',
             type: ActivityType.Custom,
         },
+        {
+            name: 'Придумываем фичи... 🔧',
+            type: ActivityType.Custom,
+        },
+        {
+            name: 'Ожидайте... 🔧',
+            type: ActivityType.Custom,
+        },
     ];
 
     setInterval(() => {
@@ -87,104 +95,7 @@ module.exports = async (client) => {
         }
     }, 10000);
 
-    // const channel = await client.channels.fetch("1295313182843211788");
-    // let hey = "Проверка 1";
-    // hey += "\nПроверка 2";
-    // await channel.send(hey);
-
-    // const rows = [];
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-one')
-    //         .setLabel("12:00 - 12:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-h')
-    //         .setLabel("13:00 - 13:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-hfg')
-    //         .setLabel("14:00 - 14:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-jghgfj')
-    //         .setLabel("15:00 - 15:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-ghjffhgj')
-    //         .setLabel("16:00 - 16:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-    
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-jghfhfgj')
-    //         .setLabel("17:00 - 17:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-kjdjfsg')
-    //         .setLabel("18:00 - 18:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-rasdrf')
-    //         .setLabel("19:00 - 19:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-fgjfhgj')
-    //         .setLabel("20:00 - 20:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-nfbdbdf')
-    //         .setLabel("21:00 - 21:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-hfsdghdfgh')
-    //         .setLabel("22:00 - 22:55")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // rows.push(
-    //     new ButtonBuilder()
-    //         .setCustomId('shift-hfghdfhf')
-    //         .setLabel("23:00 - 00:00")
-    //         .setLabel("1️⃣1️⃣")
-    //         .setStyle(ButtonStyle.Primary)
-    // );
-
-    // const buttons = [];
-
-    // for (let i = 0; i < rows.length; i += 4) {
-    //     const row = new ActionRowBuilder().addComponents(rows.slice(i, i + 4));
-    //     buttons.push(row);
-    // };
-
-    // await channel.send({ components: buttons });
+    // const channel = await client.channels.fetch("1249711900292546681");
+    // const message = await channel.messages.fetch("1332387885843873864");
+    // console.log(message.embeds[0].data.fields[message.embeds[0].data.fields.length - 1].value);
 };

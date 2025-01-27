@@ -16,7 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 const config = require('../../../../config.json');
-const { Client, Interaction, ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 async function editReply(type, interaction, member, kachannel) {
     let content;
@@ -94,6 +94,7 @@ module.exports = {
             const userNick = userPing.displayName;
             const testmember = interaction.options.getString('member');
             const memberId = testmember.replace(/[<@!>]/g, '');
+            const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
             let memberNick;
             let member;
             if (testmember === memberId) {
@@ -120,7 +121,6 @@ module.exports = {
             }
             const rank = `Принят на ${interaction.options.get('rank')?.value || "1"}`;
             const reason = interaction.options.get('reason')?.value || "Собеседование";
-            const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
             const channel = interaction.channel;
             const inviteEmbed = new EmbedBuilder()
                 .setColor(0x3498DB)
