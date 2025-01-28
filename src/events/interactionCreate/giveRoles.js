@@ -101,7 +101,6 @@ module.exports = async (client, interaction) => {
         } catch (error) {
             userPing = userId;
         }
-        console.log(userPing);
         let invite_nick_mention;
         try {
             invite_nick_mention = await client.users.fetch(invite_nick);
@@ -160,7 +159,7 @@ module.exports = async (client, interaction) => {
                     }
                 }
                 const citizenRole = guild.roles.cache.get(config.servers[guildId].citizenRoleId);
-                if (member.roles.cache.has(citizenRole)) await member.roles.remove(citizenRole);
+                if (member.roles.has(citizenRole)) await member.roles.remove(citizenRole);
                 let preNickName;
                 preNickName = `TD | ${nickname} | ${static}`;
                 let newNickName;

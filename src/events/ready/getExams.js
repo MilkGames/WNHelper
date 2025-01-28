@@ -69,7 +69,7 @@ module.exports = async (client) => {
             const examinerRoleId = config.servers[guildId].examinerRoleId;
             let content = `<@&${examinerRoleId}>`;
             if (member === "Пользователь не найден.") {
-                title += " - БРАК";
+                title = "Новая сдача экзамена! - БРАК";
                 color = 0xFF0000;
             }
 
