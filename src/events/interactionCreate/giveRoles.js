@@ -158,8 +158,8 @@ module.exports = async (client, interaction) => {
                         });
                     }
                 }
-                const citizenRole = guild.roles.cache.get(config.servers[guildId].citizenRoleId);
-                if (member.roles.cache.has(citizenRole)) await member.roles.remove(citizenRole);
+                const citizenRoleId = config.servers[guildId].citizenRoleId;
+                if (member.roles.cache.has(citizenRoleId)) await member.roles.remove(citizenRoleId);
                 let preNickName;
                 preNickName = `TD | ${nickname} | ${static}`;
                 let newNickName;
