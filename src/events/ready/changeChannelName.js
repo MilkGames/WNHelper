@@ -51,7 +51,7 @@ module.exports = async (client) => {
                     }
                 };
                 changeChannelName();
-                setInterval(changeChannelName, 360000);
+                setInterval(changeChannelName, 3600000);
             }
         }
     } catch (error) {

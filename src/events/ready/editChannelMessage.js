@@ -233,7 +233,7 @@ module.exports = async (client) => {
                     else jdChannel.send({ embeds: [jdEmbed] });
                 };
                 editChannelMessage();
-                setInterval(editChannelMessage, 360000);
+                setInterval(editChannelMessage, 3600000);
             }
         }
     } catch (error) {
