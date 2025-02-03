@@ -151,7 +151,7 @@ module.exports = async (client) => {
                     EDDepHead = members.filter(member => member.roles.cache.has(depHeadEDRoleId));
                     JDDepHead = members.filter(member => member.roles.cache.has(depHeadJDRoleId));
 
-                    rddEmbed.addFields({ name: "Заместители главы отдела DD:", value: getMembers(DDDepHead, 1) });
+                    rddEmbed.addFields({ name: "Заместитель главы отдела DD:", value: getMembers(DDDepHead, 1) });
                     rddEmbed.addFields({ name: "Заместители главы отдела RD:", value: getMembers(RDDepHead, 2) });
                     amdEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(AMDDepHead, 3) });
                     edEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(EDDepHead, 3) });
