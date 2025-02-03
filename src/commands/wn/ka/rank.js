@@ -146,7 +146,7 @@ module.exports = {
 
             const depLeaderRoleId = config.servers[guildId].depLeaderRoleId;
             const leaderRoleId = config.servers[guildId].leaderRoleId;
-            if ((rank > 7 && !userPing.roles.cache.has(depLeaderRoleId)) || userPing.roles.cache.has(leaderRoleId)) {
+            if (rank > 7 && (!userPing.roles.cache.has(depLeaderRoleId) || !userPing.roles.cache.has(leaderRoleId))) {
                 editReply(4, interaction, member, kachannel);
                 return;
             }
