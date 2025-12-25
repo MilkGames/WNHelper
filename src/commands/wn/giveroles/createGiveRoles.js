@@ -16,62 +16,94 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 const config = require('../../../../config.json');
-const { ApplicationCommandOptionType, PermissionFlagsBits } = require('discord.js');
+const {
+	ApplicationCommandOptionType,
+	PermissionFlagsBits,
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+} = require('discord.js');
+
+const logger = require('../../../utils/logger');
 
 module.exports = {
-    name: 'creategr',
-    description: 'Добавляет сообщение с выдачей ролей для Trainee Department в выбранном канале.',
-    //devOnly: Boolean
-    //testOnly: Boolean
-    options: [
-        {
-            name: 'channel',
-            description: 'Выберите канал, в который будет отправлено сообщение.',
-            required: true,
-            type: ApplicationCommandOptionType.Channel,
-        },
-    ],
-    permissionsRequired: [PermissionFlagsBits.Administrator],
-    botPermissions: [PermissionFlagsBits.ManageRoles],
+	name: 'creategr',
+	description: 'Добавляет сообщение с выдачей ролей для Trainee Department в выбранном канале.',
+	options: [
+		{
+			name: 'channel',
+			description: 'Выберите канал, в который будет отправлено сообщение.',
+			required: true,
+			type: ApplicationCommandOptionType.Channel,
+		},
+	],
+	permissionsRequired: [PermissionFlagsBits.Administrator],
+	botPermissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
 
-    callback: async (client, interaction) => {
-        try {
-            await interaction.deferReply({ ephemeral: true });
+	callback: async (client, interaction) => {
+		try {
+			await interaction.deferReply({ ephemeral: true });
 
-            const guildId = interaction.guildId;
+			const guildId = interaction.guildId;
+			const serverCfg = config.servers[guildId];
+			if (!serverCfg) {
+				await interaction.editReply({
+					content: 'Для этого сервера нет настроек в config.json.',
+					ephemeral: true,
+				});
+				return;
+			}
 
-            const leaderRoleId = config.servers[guildId].leaderRoleId;
+			const leaderRoleId = serverCfg.leaderRoleId;
+			const channel = interaction.options.getChannel('channel');
+			if (!channel) {
+				await interaction.editReply({
+					content: 'Не удалось получить канал.',
+					ephemeral: true,
+				});
+				return;
+			}
 
-            const channel = interaction.options.getChannel('channel');
-            const citizenChannel = await client.channels.fetch(config.servers[guildId].citizenChannelId);
-            if (!channel) return;
+			const citizenChannel = await client.channels.fetch(serverCfg.citizenChannelId).catch(() => null);
 
-            await channel.send(
-                `Для того, чтобы получить роли стажировки, пропишите команду \`/sendgr\` в канале ${citizenChannel}. 
-В данной команде должны быть указаны:
-\`nickname\` - Имя Фамилия вашего персонажа, к примеру: Michael Lindberg
-\`static\` - ваш статик, к примеру: 7658
-\`invite-nick\` - тег сотрудника, который вас принимал.
-Сотрудники Weazel News не примут вашу заявку на выдачу ролей, если она была составлена не по форме.
+			const row = new ActionRowBuilder().addComponents(
+				new ButtonBuilder()
+					.setCustomId('gr-open-modal')
+					.setLabel('Подать заявку на роли стажировки')
+					.setStyle(ButtonStyle.Primary)
+			);
 
-Если вам нужны особенные роли (МК, лидера/зам. лидера и т.п.), обратитесь напрямую в личные сообщения лидеру WN с ролью <@&${leaderRoleId}>.
-Если же вы новый куратор фракции, пинганите ГК или ЗГА в ${citizenChannel}.
--# WN Helper by Michael Lindberg. Discord: milkgames`
-            );
+			const citizenChannelMention = citizenChannel ? `${citizenChannel}` : 'нужном канале';
+			const text =
+				`Чтобы получить роли стажировки, нажмите кнопку ниже и заполните форму.\n` +
+				`Поля заявки:\n` +
+				`- **nickname** — Имя Фамилия персонажа (пример: Michael Lindberg)\n` +
+				`- **static** — ваш статик (пример: 7658)\n` +
+				`- **invite** — тег/ID сотрудника, который вас принимал\n\n` +
+				`Заявки, составленные не по форме, могут быть отклонены.\n\n` +
+				`Если вам нужны особенные роли (МК, лидер/зам. лидера и т.п.), обратитесь напрямую в личные сообщения лидеру WN с ролью <@&${leaderRoleId}>.\n` +
+				`Если вы новый куратор фракции, пинганите Главного Куратора гос. фракций в ${citizenChannelMention}.\n` +
+				`-# WN Helper by Michael Lindberg. Discord: milkgames`;
 
-            await interaction.editReply({
-                content: `Сообщение создано успешно в канале ${channel}!`,
-                ephemeral: true,
-            });
-            return;
-        } catch (error) {
-            console.log(`Произошла ошибка при создании сообщения с выдачей ролей: ${error}`);
-            if (!interaction.replied) {
-                await interaction.editReply({
-                    content: `Произошла ошибка при создании сообщения с выдачей ролей: ${error}`,
-                    ephemeral: true,
-                });
-            }
-        }
-    },
+			await channel.send({
+				content: text,
+				components: [row],
+			});
+
+			await interaction.editReply({
+				content: `Сообщение создано успешно в канале ${channel}!`,
+				ephemeral: true,
+			});
+		} catch (error) {
+			logger.info(`Произошла ошибка при создании сообщения с выдачей ролей: ${error}`);
+			try {
+				await interaction.editReply({
+					content: `Произошла ошибка при создании сообщения с выдачей ролей: ${error}`,
+					ephemeral: true,
+				});
+			} catch (_) {
+				// noop
+			}
+		}
+	},
 };

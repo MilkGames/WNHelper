@@ -15,145 +15,229 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
+
 const { ButtonBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
-const config = require('../../../config.json');
 const cron = require('node-cron');
+
+const config = require('../../../config.json');
 const amdShifts = require('../../models/amdShifts');
+const amdShiftRotation = require('../../models/amdShiftRotation');
+const logger = require('../../utils/logger');
+
+const {
+    FREE_SHIFT_VALUE,
+    SHIFT_MAP,
+    ACCESS_STAGE_MINUTES,
+    getMoscowDateKey,
+    daysBetween,
+    buildShiftLines,
+    buildScheduleMessageContent,
+    buildAccessPlan,
+    formatRoleMentions,
+    uniqRoleIds,
+} = require('../../utils/amdShiftUtils');
+
+function buildButtons() {
+    const buttons = SHIFT_MAP.map((shift) =>
+        new ButtonBuilder()
+            .setCustomId(shift.id)
+            .setStyle(ButtonStyle.Primary)
+            .setLabel(String(shift.number))
+    );
+
+    const rows = [];
+    for (let i = 0; i < buttons.length; i += 5) {
+        rows.push(new ActionRowBuilder().addComponents(buttons.slice(i, i + 5)));
+    }
+    return rows;
+}
+
+function getTomorrowFormattedDate() {
+    const todayKey = getMoscowDateKey(new Date());
+    const todayUtc = new Date(`${todayKey}T00:00:00Z`);
+    const tomorrowUtc = new Date(todayUtc.getTime() + 24 * 60 * 60 * 1000);
+
+    const dd = new Intl.DateTimeFormat('ru-RU', {
+        timeZone: 'Europe/Moscow',
+        day: '2-digit',
+    }).format(tomorrowUtc);
+    const mm = new Intl.DateTimeFormat('ru-RU', {
+        timeZone: 'Europe/Moscow',
+        month: '2-digit',
+    }).format(tomorrowUtc);
+    const yyyy = new Intl.DateTimeFormat('ru-RU', {
+        timeZone: 'Europe/Moscow',
+        year: 'numeric',
+    }).format(tomorrowUtc);
+
+    return `${dd}.${mm}.${yyyy}`;
+}
+
+async function getRotationIndexForToday(guildId) {
+    const todayKey = getMoscowDateKey(new Date());
+    const state = await amdShiftRotation.findOne({ guildId });
+
+    if (!state) {
+        const created = new amdShiftRotation({ guildId, rotationIndex: 0, lastRunDate: todayKey });
+        await created.save();
+        return 0;
+    }
+
+    const lastKey = state.lastRunDate;
+    if (!lastKey || lastKey === todayKey) {
+        return typeof state.rotationIndex === 'number' ? state.rotationIndex : 0;
+    }
+
+    const diff = Math.max(0, daysBetween(lastKey, todayKey));
+    const current = typeof state.rotationIndex === 'number' ? state.rotationIndex : 0;
+    const next = (current + diff) % 3;
+    await amdShiftRotation.updateOne({ guildId }, { rotationIndex: next, lastRunDate: todayKey });
+    return next;
+}
+
+async function cleanupPreviousSchedule({ guildId, channel }) {
+    const existing = await amdShifts.findOne({ guildId });
+    if (!existing) return;
+
+    try {
+        const message = await channel.messages.fetch(existing.messageId);
+        await message.edit({ components: [] }).catch(() => {});
+    } catch (error) {
+        logger.info(`AMD смены: не удалось очистить старое сообщение для сервера ${guildId}: ${error}`);
+    }
+
+    await amdShifts.deleteOne({ guildId });
+}
+
+async function scheduleAccessNotifications({
+    client,
+    guildId,
+    channel,
+    messageId,
+    formattedDate,
+    sentAtMs,
+    rotationIndex,
+    serverConfig,
+}) {
+    const plan = buildAccessPlan(serverConfig, rotationIndex);
+
+    const stageRoleIds = plan.stages;
+    const stageDelays = [ACCESS_STAGE_MINUTES, ACCESS_STAGE_MINUTES * 2];
+
+    for (let i = 0; i < stageDelays.length; i += 1) {
+        const stageIdx = i + 1;
+        const delayMs = stageDelays[i] * 60 * 1000;
+
+        setTimeout(async () => {
+            try {
+                const current = await amdShifts.findOne({ guildId, messageId });
+                if (!current) return;
+
+                const shiftLines = await buildShiftLines(client, current);
+                const content = buildScheduleMessageContent({
+                    formattedDate,
+                    shiftLines,
+                    serverConfig,
+                    rotationIndex: current.rotationIndex ?? rotationIndex,
+                    sentAtMs: current.sentAt ?? sentAtMs,
+                    nowMs: Date.now(),
+                });
+
+                const message = await channel.messages.fetch(messageId);
+                await message.edit({ content }).catch(() => {});
+
+                const prevRoleIds = uniqRoleIds(stageRoleIds[stageIdx - 1]);
+                const nextRoleIds = uniqRoleIds(stageRoleIds[stageIdx]);
+                const newlyAdded = nextRoleIds.filter((id) => !prevRoleIds.includes(id));
+                if (newlyAdded.length) {
+                    await channel.send(
+                        `:bell: Смены на ${formattedDate}: открыт доступ к выбору смен для ${formatRoleMentions(newlyAdded)}.`
+                    );
+                }
+            } catch (error) {
+                logger.info(`AMD смены: не удалось отправить уведомление этапа для сервера ${guildId}: ${error}`);
+            }
+        }, delayMs);
+    }
+}
 
 module.exports = async (client) => {
-    for (const serverId of Object.keys(config.servers)){
-        //if (serverId !== "1275070473474146345") break;
-        const serverName = client.guilds.cache.get(serverId);
-        const channel = await client.channels.fetch(config.servers[serverId].amdShiftsChannelId);
-        const AMDRoleId = config.servers[serverId].AMDRoleId;
-        const partWorkAMDRoleId = config.servers[serverId].partWorkAMDRoleId;
-        const headAMDRoleId = config.servers[serverId].headAMDRoleId;
-        console.log(`Смены для AMD успешно запланированы на сервере ${serverName}.`);
-        cron.schedule('0 21 * * *', async () => {
-            console.log(`Начинаю отправлять смены AMD для сервера ${serverName}...`);
-            let currentDate = new Date();
-            let tomorrow = new Date(currentDate);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            let formattedDate = `${String(tomorrow.getDate()).padStart(2, '0')}.${String(tomorrow.getMonth() + 1).padStart(2, '0')}.${tomorrow.getFullYear()}`;
-            
-            const query = {
-                guildId: serverId,
-            };
+    for (const guildId of Object.keys(config.servers)) {
+        const serverName = client.guilds.cache.get(guildId)?.name || guildId;
+        const serverConfig = config.servers[guildId];
 
-            const ifGuildId = await amdShifts.findOne(query);
+        let channel;
+        try {
+            channel = await client.channels.fetch(serverConfig.amdShiftsChannelId);
+        } catch (error) {
+            logger.info(`AMD смены: не удалось получить канал для сервера ${serverName}: ${error}`);
+            continue;
+        }
 
-            if (ifGuildId) {
-                const messageId = ifGuildId.messageId;
-                const message = await channel.messages.fetch(messageId);
-                await message.edit({ components: [] });
-                await amdShifts.deleteOne(query);
+        logger.info(`Смены для AMD успешно запланированы на сервере ${serverName}.`);
+
+        cron.schedule(
+            '0 22 * * *', 
+            async () => {
+                try {
+                    logger.info(`Начинаю отправлять смены AMD для сервера ${serverName}...`);
+
+                    const rotationIndex = await getRotationIndexForToday(guildId);
+                    const formattedDate = getTomorrowFormattedDate();
+
+                    await cleanupPreviousSchedule({ guildId, channel });
+
+                    const sentAtMs = Date.now();
+                    const emptyRecord = {};
+                    for (const shift of SHIFT_MAP) {
+                        emptyRecord[shift.field] = FREE_SHIFT_VALUE;
+                    }
+
+                    const shiftLines = await buildShiftLines(client, emptyRecord);
+                    const content = buildScheduleMessageContent({
+                        formattedDate,
+                        shiftLines,
+                        serverConfig,
+                        rotationIndex,
+                        sentAtMs,
+                        nowMs: sentAtMs,
+                    });
+
+                    const sentMessage = await channel.send({
+                        content,
+                        components: buildButtons(),
+                    });
+
+                    const record = new amdShifts({
+                        guildId,
+                        messageId: sentMessage.id,
+                        date: formattedDate,
+                        sentAt: sentAtMs,
+                        rotationIndex,
+                        ...emptyRecord,
+                    });
+                    await record.save();
+
+                    await scheduleAccessNotifications({
+                        client,
+                        guildId,
+                        channel,
+                        messageId: sentMessage.id,
+                        formattedDate,
+                        sentAtMs,
+                        rotationIndex,
+                        serverConfig,
+                    });
+
+                    logger.info(`Смены для AMD успешно отправлены на сервере ${serverName}.`);
+                } catch (error) {
+                    logger.info(`AMD смены: не удалось отправить расписание для сервера ${serverName}: ${error}`);
+                }
+            },
+            {
+                scheduled: true,
+                timezone: 'Europe/Moscow',
             }
-
-            let pingRoles;
-            if (partWorkAMDRoleId) pingRoles = `<@&${partWorkAMDRoleId}>
-<@&${AMDRoleId}>`;
-            else pingRoles = `<@&${AMDRoleId}>`;
-
-            const content = `:white_check_mark: Смены на ${formattedDate}:
-
-:one: 14:00 - 14:55: Свободно
-:two: 15:00 - 15:55: Свободно
-:three: 16:00 - 16:55: Свободно
-:four: 17:00 - 17:55: Свободно
-:five: 18:00 - 18:55: Свободно
-:six: 19:00 - 19:55: Свободно
-:seven: 20:00 - 20:55: Свободно
-:eight: 21:00 - 22:00: Свободно
-
-**Нажмите на кнопку, соответствующую времени смены, чтобы занять текущее время в холле и для отправления объявлений.**
-Пользователи с ролью <@&${headAMDRoleId}> также могут нажать на кнопку, чтобы убрать сотрудника из списка.
-В очень редких случаях кнопки могут оставаться неактивными после того, как вы на них нажали.
-Это визуальный баг, используйте Ctrl+R, чтобы перезапустить Discord и кнопки вновь будут активными.
-${pingRoles}
--# WN Helper by Michael Lindberg. Discord: milkgames`;
-
-            const rows = [];
-
-            rows.push(
-                new ButtonBuilder()
-                    .setCustomId('shift-one')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('1️⃣')
-            );
-
-            rows.push(
-                new ButtonBuilder()
-                    .setCustomId('shift-two')
-                    .setEmoji('2️⃣')
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-            rows.push(
-                new ButtonBuilder()
-                    .setCustomId('shift-three')
-                    .setEmoji('3️⃣')
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-            rows.push(
-                new ButtonBuilder()
-                    .setCustomId('shift-four')
-                    .setEmoji('4️⃣')
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-            rows.push(
-                new ButtonBuilder()
-                    .setCustomId('shift-five')
-                    .setEmoji('5️⃣')
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-            rows.push(
-                new ButtonBuilder()
-                    .setCustomId('shift-six')
-                    .setEmoji('6️⃣')
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-            rows.push(
-                new ButtonBuilder()
-                    .setCustomId('shift-seven')
-                    .setEmoji('7️⃣')
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-            rows.push(
-                new ButtonBuilder()
-                    .setCustomId('shift-eight')
-                    .setEmoji('8️⃣')
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-            const buttons = [];
-
-            for (let i = 0; i < rows.length; i += 4) {
-                const row = new ActionRowBuilder().addComponents(rows.slice(i, i + 4));
-                buttons.push(row);
-            };
-
-            const sentMessage = await channel.send({
-                content: `${content}`,
-                components: buttons,
-            });
-
-            const messageId = sentMessage.id;
-            const newAmdShifts = new amdShifts({
-                guildId: serverId,
-                messageId: messageId,
-                date: formattedDate
-            });
-            newAmdShifts.save();
-
-            console.log(`Смены для AMD успешно отправлены на сервере ${serverName}.`);
-        }, {
-            scheduled: true,
-            timezone: "Europe/Moscow"
-        });
+        );
     }
 };

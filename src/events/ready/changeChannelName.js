@@ -15,46 +15,66 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-const {} = require('discord.js');
 const config = require('../../../config.json');
+
+const logger = require('../../utils/logger');
 
 module.exports = async (client) => {
     try {
-        for (const serverId of Object.keys(config.servers)){
+        for (const serverId of Object.keys(config.servers)) {
             const WNroleNumberChannelId = config.servers[serverId].WNroleNumberChannelId;
             const membersChannelId = config.servers[serverId].membersChannelId;
+
+            const guild = client.guilds.cache.get(serverId);
+            if (!guild) continue;
+
             if (WNroleNumberChannelId && membersChannelId) {
-                let guild = client.guilds.cache.get(serverId);
-                let WNroleNumberChannel = await guild.channels.fetch(WNroleNumberChannelId);
-                let membersChannel = await guild.channels.fetch(membersChannelId);
+                let WNroleNumberChannel = await guild.channels.fetch(WNroleNumberChannelId).catch(() => null);
+                let membersChannel = await guild.channels.fetch(membersChannelId).catch(() => null);
+                
                 let roleId = config.servers[serverId].weazelNewsRoleId;
-                let members;
-                let membersWithRole;
-                let countWN;
-                let newWNName;
-                let previousWNName;
-                let previousMember;
-                let changeChannelName = async () => {
-                    members = await guild.members.fetch();
-                    membersWithRole = members.filter(member => member.roles.cache.has(roleId));
-                    countWN = membersWithRole.size;
-                    countMembers = members.size;
-                    newWNName = `Сотрудников: ${countWN}`;
-                    newMembersName = `Участников: ${countMembers}`
-                    if (previousWNName !== newWNName) {
-                        await WNroleNumberChannel.setName(newWNName);
-                        previousWNName = newWNName;
-                    }
-                    if (previousMember !== newMembersName) {
-                        await membersChannel.setName(newMembersName);
-                        previousMember = newMembersName;
+                
+                let previousWNName = WNroleNumberChannel ? WNroleNumberChannel.name : null;
+                let previousMember = membersChannel ? membersChannel.name : null;
+
+                const changeChannelName = async () => {
+                    try {
+                        if (!WNroleNumberChannel) WNroleNumberChannel = await guild.channels.fetch(WNroleNumberChannelId).catch(() => null);
+                        if (!membersChannel) membersChannel = await guild.channels.fetch(membersChannelId).catch(() => null);
+                        
+                        if (!WNroleNumberChannel || !membersChannel) return;
+                        
+                        await guild.members.fetch({ time: 120000, withPresences: false, force: true }).catch(err => {
+                            logger.info(`Ошибка! Не удалось загрузить список участников для ${guild.name}: ${err.message}`);
+                        });
+
+                        const role = guild.roles.cache.get(roleId) || await guild.roles.fetch(roleId).catch(() => null);
+                        
+                        const countWN = role ? role.members.size : 0;
+                        const countMembers = guild.memberCount;
+
+                        const newWNName = `Сотрудников: ${countWN}`;
+                        const newMembersName = `Участников: ${countMembers}`;
+
+                        if (previousWNName !== newWNName) {
+                            await WNroleNumberChannel.setName(newWNName);
+                            previousWNName = newWNName;
+                        }
+
+                        if (previousMember !== newMembersName) {
+                            await membersChannel.setName(newMembersName);
+                            previousMember = newMembersName;
+                        }
+                    } catch (error) {
+                        logger.info(`Произошла ошибка при обновлении названия канала (Сервер: ${guild.name}): ${error}`);
                     }
                 };
+
                 changeChannelName();
                 setInterval(changeChannelName, 3600000);
             }
         }
     } catch (error) {
-        console.log(`Произошла ошибка при обновлении названия канала: ${error}`);
+        logger.info(`Критическая ошибка в модуле статистики каналов: ${error}`);
     }
 }

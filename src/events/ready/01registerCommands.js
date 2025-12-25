@@ -22,6 +22,8 @@ const areCommandsDifferent = require('../../utils/areCommandsDifferent');
 const getApplicationCommands = require('../../utils/getApplicationCommands');
 const getLocalCommands = require('../../utils/getLocalCommands');
 
+const logger = require('../../utils/logger');
+
 module.exports = async (client) => {
     const commandsData = [
         new ContextMenuCommandBuilder()
@@ -35,7 +37,7 @@ module.exports = async (client) => {
     const rest = new REST().setToken(process.env.token);
 
     try {
-        console.log('Перезагружаю контекстные команды на всех серверах...');
+        logger.info('Перезагружаю контекстные команды на всех серверах...');
 
         const client_id = config.clientId;
 
@@ -44,21 +46,22 @@ module.exports = async (client) => {
             { body: commandsData },
         )
 
-        console.log('Успешно зарегестрировал контекстные команды на всех серверах!');
+        logger.info('Успешно зарегестрировал контекстные команды на всех серверах!');
     } catch (error) {
-        console.error(`Произошла ошибка при регистрации контекстных команд: ${error}`);
+        logger.error(`Произошла ошибка при регистрации контекстных команд: ${error}`);
     }
 
     try {
         const localCommands = getLocalCommands();
 
         for (const serverId of Object.keys(config.servers)){
-            const serverName = client.guilds.cache.get(serverId);
+            const serverName = client.guilds.cache.get(serverId)?.name || serverId;
 
             const applicationCommands = await getApplicationCommands(client, serverId);
 
             for (const localCommand of localCommands){
                 const { name, description, options } = localCommand;
+                logger.info(`Обрабатываю команду "${name}" на сервере ${serverName}...`);
 
                 const existingCommand = await applicationCommands.cache.find(
                     (cmd) => cmd.name === name
@@ -67,13 +70,13 @@ module.exports = async (client) => {
                 if (existingCommand){
                     if (localCommand.deleted){
                         await applicationCommands.delete(existingCommand.id);
-                        console.log(`Удалена команда "${name}" на сервере ${serverName}.`);
+                        logger.info(`Удалена команда "${name}" на сервере ${serverName}.`);
                         continue;
                     }
 
                     if (localCommand.mainOnly && serverId !== Object.keys(config.servers)[0]){
                         await applicationCommands.delete(existingCommand.id);
-                        console.log(`Удалена команда "${name}" на сервере ${serverName}, так как она является эксклюзивной для основного сервера.`);
+                        logger.info(`Удалена команда "${name}" на сервере ${serverName}, так как она является эксклюзивной для основного сервера.`);
                         continue;
                     }
 
@@ -83,16 +86,16 @@ module.exports = async (client) => {
                             options,
                         });
 
-                        console.log(`Изменена команда "${name}" на сервере ${serverName}.`);
+                        logger.info(`Изменена команда "${name}" на сервере ${serverName}.`);
                     }
                 } else {
                     if (localCommand.deleted){
-                        console.log(`Пропущена регистрация команды "${name}" на сервере ${serverName}, так как она обозначена на удаление.`)
+                        logger.info(`Пропущена регистрация команды "${name}" на сервере ${serverName}, так как она обозначена на удаление.`)
                         continue;
                     }
 
                     if (localCommand.mainOnly && serverId !== Object.keys(config.servers)[0]){
-                        console.log(`Пропущена регистрация команды "${name}" на сервере ${serverName}, так как она является эксклюзивной для основного сервера.`);
+                        logger.info(`Пропущена регистрация команды "${name}" на сервере ${serverName}, так как она является эксклюзивной для основного сервера.`);
                         continue;
                     }
                     
@@ -102,11 +105,11 @@ module.exports = async (client) => {
                         options,
                     })
 
-                    console.log(`Успешно зарегистрирована команда "${name}" на сервере ${serverName}.`);
+                    logger.info(`Успешно зарегистрирована команда "${name}" на сервере ${serverName}.`);
                 }
             }
         }
     } catch (error) {
-        console.log(`Произошла ошибка при регистрации команд: ${error}`);
+        logger.info(`Произошла ошибка при регистрации команд: ${error}`);
     }
 }

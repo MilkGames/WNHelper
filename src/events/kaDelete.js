@@ -17,22 +17,58 @@
 */
 const { Events } = require('discord.js');
 const config = require('../../config.json');
+const logger = require('../utils/logger');
 
 module.exports = {
     name: Events.MessageReactionAdd,
     async execute(reaction, user) {
-        if (user.bot) return;
-        const guildId = reaction.message.guild.id;
-        const targetChannelId = config.servers[guildId].kaChannelId;
-        if (reaction.message.channel.id !== targetChannelId) return;
-        const kaDeleteChannel = await reaction.message.client.channels.fetch(config.servers[guildId].kaDeleteChannelId);
+        try {
+            if (user?.bot) return;
 
-        const targetEmoji = '❌';
-        if (reaction.emoji.name !== targetEmoji) return;
-        const messageId = reaction.message.id;
-        const messageLink = `https://discord.com/channels/${guildId}/${targetChannelId}/${messageId}`;
-        kaDeleteChannel.send(`<@&${config.servers[guildId].leaderRoleId}>, новая заявка на удаление записи из кадрового аудита!
-Ссылка на сообщение: ${messageLink}`);
-        return;
+            if (reaction?.partial) {
+                await reaction.fetch().catch(() => null);
+            }
+            if (reaction?.message?.partial) {
+                await reaction.message.fetch().catch(() => null);
+            }
+
+            const guild = reaction?.message?.guild;
+            if (!guild) return;
+
+            const guildId = guild.id;
+            const serverCfg = config?.servers?.[guildId];
+
+            if (!serverCfg) {
+                logger.debug('kaDelete: сервер не настроен, пропускаю', { guildId });
+                return;
+            }
+
+            const { kaChannelId, kaDeleteChannelId, leaderRoleId } = serverCfg;
+            if (!kaChannelId || !kaDeleteChannelId || !leaderRoleId) {
+                logger.warn('kaDelete: не хватает настроек КА для сервера, пропускаю', { guildId });
+                return;
+            }
+
+            if (reaction.message.channel.id !== kaChannelId) return;
+
+            const targetEmoji = '❌';
+            if (reaction.emoji?.name !== targetEmoji) return;
+
+            const kaDeleteChannel = await reaction.message.client.channels.fetch(kaDeleteChannelId).catch(() => null);
+            if (!kaDeleteChannel) {
+                logger.warn('kaDelete: не удалось получить канал для удаления', { guildId, kaDeleteChannelId });
+                return;
+            }
+
+            const messageId = reaction.message.id;
+            const messageLink = `https://discord.com/channels/${guildId}/${kaChannelId}/${messageId}`;
+
+            await kaDeleteChannel.send(
+                `<@&${leaderRoleId}>, новая заявка на удаление записи из кадрового аудита!
+Ссылка на сообщение: ${messageLink}`,
+            );
+        } catch (error) {
+            logger.error('kaDelete: обработчик крашнулся', {}, error);
+        }
     },
 };

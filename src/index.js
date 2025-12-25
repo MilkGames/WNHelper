@@ -16,38 +16,54 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 require('dotenv').config();
-const { Client, IntentsBitField, Partials } = require('discord.js');
-const mongoose = require('mongoose');
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const eventHandler = require('./handlers/eventHandler');
 const kaDelete = require('./events/kaDelete');
+const { ensureDatabase } = require('./utils/localDb');
+
+const logger = require('./utils/logger');
 
 const client = new Client({
     intents: [
-        IntentsBitField.Flags.Guilds,
-        IntentsBitField.Flags.GuildMembers,
-        IntentsBitField.Flags.GuildMessages,
-        IntentsBitField.Flags.GuildMessageReactions,
-        IntentsBitField.Flags.MessageContent,
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.MessageContent,
     ],
     partials: [
         Partials.Message,
         Partials.Reaction,
-        Partials.Channel
-    ]
+        Partials.Channel,
+    ],
 });
 
-(async () => {
-    try {
-        mongoose.set('strictQuery', false);
-        await mongoose.connect(process.env.mongodb_uri);
-        console.log("Бот успешно подключён к базе данных MongoDB!");
+async function main() {
+    process.on('unhandledRejection', (reason) => {
+        logger.error('Необработанное отклонение промиса:', reason);
+    });
+    process.on('uncaughtException', (err) => {
+        logger.fatal('Непойманное исключение:', err);
+        process.exit(1);
+    });
 
-        eventHandler(client);
-    } catch (error) {
-        console.log(`Произошла ошибка при подключении к базе данных MongoDB: ${error}`);
+    const token = process.env.token;
+    if (!token) {
+        logger.fatal('Не задана переменная окружения "token". Укажи её в .env (token=...)');
+        process.exit(1);
     }
-})();
 
-client.on(kaDelete.name, kaDelete.execute);
+    ensureDatabase();
+    logger.info('Локальная база данных готова.');
 
-client.login(process.env.token);
+    await eventHandler(client);
+
+    client.on(kaDelete.name, kaDelete.execute);
+
+    await client.login(token);
+}
+
+main().catch((error) => {
+    logger.fatal('Ошибка при запуске бота:', error);
+    process.exit(1);
+});

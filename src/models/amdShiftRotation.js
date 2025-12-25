@@ -1,3 +1,3 @@
 const { createModel } = require('../utils/localDb');
 
-module.exports = createModel('giveRoles');
+module.exports = createModel('amdShiftRotation');

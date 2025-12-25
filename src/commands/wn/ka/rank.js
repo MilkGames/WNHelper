@@ -18,6 +18,8 @@
 const config = require('../../../../config.json');
 const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
+const logger = require('../../../utils/logger');
+
 async function editReply(type, interaction, member, kachannel) {
     let content;
     switch(type) {
@@ -53,7 +55,7 @@ async function editReply(type, interaction, member, kachannel) {
         try {
             await interaction.deleteReply();
         } catch (error) {
-            console.log(`Не удалось удалить ответ: ${error}`);
+            logger.info(`Не удалось удалить ответ: ${error}`);
         }
     }, 30000);
     return;
@@ -103,88 +105,123 @@ module.exports = {
     callback: async (client, interaction) => {
         try {
             await interaction.deferReply({ ephemeral: true });
-            const guildId = interaction.guildId;
 
+            const guildId = interaction.guildId;
             const guild = await client.guilds.fetch(guildId);
 
             const userId = interaction.user.id;
             const userPing = await guild.members.fetch(userId);
-
             const userNick = userPing.displayName;
-            const testmember = interaction.options.getString('member');
+
+            const testmember = interaction.options.getString('member', true);
             const memberId = testmember.replace(/[<@!>]/g, '');
+
             const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
 
             let memberNick;
             let member;
+            let staticId;
+
             if (testmember === memberId) {
                 member = testmember;
-                static = interaction.options.get('static')?.value || 'Null';
-                memberNick = 'Null';
-                if (static === 'Null') {
-                    editReply(1, interaction, member, kachannel);
+                staticId = interaction.options.getString('static') ?? null;
+                memberNick = null;
+
+                if (!staticId) {
+                    await editReply(1, interaction, member, kachannel);
                     return;
                 }
-            }
-            else {
+            } else {
                 member = await guild.members.fetch(memberId);
-
                 memberNick = member.displayName;
+
                 const match = memberNick.match(/(\d+)$/);
-                if (match) static = match[1];
-                else {
-                    static = interaction.options.get('static')?.value || 'Null';
-                    if (static === 'Null') {
-                        editReply(2, interaction, member, kachannel);
+                if (match) {
+                    staticId = match[1];
+                } else {
+                    staticId = interaction.options.getString('static') ?? null;
+                    if (!staticId) {
+                        await editReply(2, interaction, member, kachannel);
                         return;
                     }
                 }
             }
-            const action = interaction.options.getString('action');
-            const reason = interaction.options.getString('reason');
-            const rank = parseInt(action.match(/\d$/));
 
-            const depLeaderRoleId = config.servers[guildId].depLeaderRoleId;
-            const leaderRoleId = config.servers[guildId].leaderRoleId;
-            if (rank > 7 && (!userPing.roles.cache.has(depLeaderRoleId) || !userPing.roles.cache.has(leaderRoleId))) {
-                editReply(4, interaction, member, kachannel);
+            const action = interaction.options.getString('action', true);
+            const isPromotion = action.toLowerCase().includes('повышен');
+            const reason = interaction.options.getString('reason', true);
+
+            const rankMatch = action.match(/(\d+)\s*$/);
+            const rank = rankMatch ? parseInt(rankMatch[1], 10) : NaN;
+
+            if (!Number.isFinite(rank) || rank < 1 || rank > 8) {
+                await interaction.editReply({
+                    content: 'Запрошенный ранг выше, чем доступно в текущем конфиге (максимум 8).',
+                    ephemeral: true,
+                });
                 return;
             }
-            if (member.nickname && guildId == Object.keys(config.servers)[2]) {
+
+            // 6+ только лидер/зам
+            if (rank >= 6) {
+                const leaderRoleId = config.servers[guildId].leaderRoleId;
+                const depLeaderRoleId = config.servers[guildId].depLeaderRoleId;
+
+                const isLeader =
+                    (leaderRoleId && userPing.roles.cache.has(leaderRoleId)) ||
+                    (depLeaderRoleId && userPing.roles.cache.has(depLeaderRoleId));
+
+                if (!isLeader) {
+                    await editReply(4, interaction, member, kachannel);
+                    return;
+                }
+            }
+
+            const isGuildMember = member && typeof member === 'object' && member.roles && member.guild;
+
+            // Автосмена ролей/ника — только если member реально GuildMember (т.е. был пинг)
+            // Понижения редки, но бывают, сделаем на всякий проверку
+            // Если пишут вручную... пусть учатся правильно писать нужное в поле action!!!
+            if (isGuildMember && member.nickname && isPromotion) {
                 switch (rank) {
-                    case 2:
-                        await changeRank(member, config.servers[guildId].firstRankRoleId, config.servers[guildId].secondRankRoleId);
-                        break;
-                    case 3:
-                        await changeRank(member, config.servers[guildId].secondRankRoleId, config.servers[guildId].thirdRankRoleId);
-                        const TDRole = member.guild.roles.cache.get(config.servers[guildId].traineeRoleId);
-                        if (TDRole) await member.roles.remove(TDRole);
+                    case 2: {
+                        await changeRank(
+                            member,
+                            config.servers[guildId].firstRankRoleId,
+                            config.servers[guildId].secondRankRoleId
+                        );
+
+                        const tdRole = member.guild.roles.cache.get(config.servers[guildId].traineeRoleId);
+                        if (tdRole) await member.roles.remove(tdRole);
+
                         let prefix = "";
-                        if (member.roles.cache.has(config.servers[guildId].RDDRoleId)) prefix = "RD";
+                        if (member.roles.cache.has(config.servers[guildId].RDDRoleId)) prefix = "RDD";
                         if (member.roles.cache.has(config.servers[guildId].AMDRoleId)) prefix = "AMD";
                         if (member.roles.cache.has(config.servers[guildId].EDRoleId)) prefix = "ED";
                         if (member.roles.cache.has(config.servers[guildId].JDRoleId)) prefix = "JD";
-                        let baseNickName = memberNick.split('|')[1].trim();
-                        let preNickName = `${prefix} | ${baseNickName} | ${static}`;
-                        let newNickName;
+
+                        let baseNickName = memberNick.split('|')[1]?.trim() ?? memberNick;
+                        let preNickName = `${prefix} | ${baseNickName} | ${staticId}`;
+
+                        let newNickName = preNickName;
                         if (preNickName.length > 32) {
-                            let firstSpace;
                             for (let i = 0; i < baseNickName.length; i++) {
                                 if (baseNickName[i] === ' ') {
-                                    firstSpace = i;
-                                    newNickName = `${prefix} | ${baseNickName.slice(0, i+2)}. | ${static}`;
+                                    newNickName = `${prefix} | ${baseNickName.slice(0, i + 2)}. | ${staticId}`;
                                     break;
                                 }
                             }
                         }
-                        else {
-                            newNickName = preNickName;
-                        }
+
                         try {
-                            member.setNickname(`${newNickName}`);
+                            await member.setNickname(`${newNickName}`);
                         } catch (error) {
-                            console.log(`Ещё один чел поставил ник больше 32 символов. ${error}`);
+                            logger.info(`Ошибка при изменении ника: ${error}`);
                         }
+                        break;
+                    }
+                    case 3:
+                        await changeRank(member, config.servers[guildId].firstRankRoleId, config.servers[guildId].thirdRankRoleId);
                         break;
                     case 4:
                         await changeRank(member, config.servers[guildId].thirdRankRoleId, config.servers[guildId].fourthRankRoleId);
@@ -198,58 +235,53 @@ module.exports = {
                     case 7:
                         await changeRank(member, config.servers[guildId].sixthRankRoleId, config.servers[guildId].seventhRankRoleId);
                         break;
-                    case 8:
-                        await changeRank(member, config.servers[guildId].seventhRankRoleId, config.servers[guildId].eighthRankRoleId);
-                        break;
-                    case 9:
-                        await changeRank(member, config.servers[guildId].eighthRankRoleId, config.servers[guildId].depLeaderRoleId);
-                        break;
                 }
             }
 
-            const channel = interaction.channel;
             const rankEmbed = new EmbedBuilder()
                 .setColor(0x2ECC70)
                 .setTitle('Кадровый аудит • Изменение ранга')
-                .addFields(
-                    { name: 'Обновил(-а):', value: `${userPing} | ${userNick} | ||${userId}||` },
-                )
+                .addFields({ name: 'Обновил(-а):', value: `${userPing} | ${userNick} | ||${userId}||` })
                 .setTimestamp()
                 .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
-            if (memberNick === 'Null') {
-                rankEmbed.addFields(
-                    { name: 'Обновлен(-а):', value: `${member}` },
-                )
-            }
-            else {
-                rankEmbed.addFields(
-                    { name: 'Обновлен(-а):', value: `${member} | ${memberNick} | ||${memberId}||` },
-                )
-            }
-            rankEmbed.addFields(
-                { name: 'Номер ID карты:', value: `${static}`, inline: true },
-                { name: 'Действие:', value: `${action}`, inline: true },
-                { name: 'Причина:', value: `${reason}`},
-            )
-            kachannel.send({ embeds: [rankEmbed] });
 
-            if (kachannel === channel) {
-                await interaction.editReply({
-                    content: 'Meow!',
-                    ephemeral: true,
-                });
+            if (!memberNick) {
+                rankEmbed.addFields({ name: 'Обновлен(-а):', value: `${member}` });
+            } else {
+                rankEmbed.addFields({ name: 'Обновлен(-а):', value: `${member} | ${memberNick} | ||${memberId}||` });
+            }
+
+            rankEmbed.addFields(
+                { name: 'Номер ID карты:', value: `${staticId}`, inline: true },
+                { name: 'Действие:', value: `${action}`, inline: true },
+                { name: 'Причина:', value: `${reason}` }
+            );
+
+            await kachannel.send({ embeds: [rankEmbed] });
+
+            if (kachannel?.id === interaction.channelId) {
+                await interaction.editReply({ content: 'Meow!', ephemeral: true });
                 await interaction.deleteReply();
             } else {
-                editReply(3, interaction, member, kachannel);
+                await editReply(3, interaction, member, kachannel);
             }
-            return;
         } catch (error) {
-            console.log(`Произошла ошибка отписи изменения ранга в КА: ${error}`);
-            if (!interaction.replied) {
-                await interaction.editReply({
-                    content: `Произошла ошибка изменения ранга в КА: ${error}`,
-                    ephemeral: true,
-                });
+            logger.error(`Произошла ошибка отписи изменения ранга в КА: ${error}`);
+
+            try {
+                if (interaction.deferred || interaction.replied) {
+                    await interaction.editReply({
+                        content: `Произошла ошибка изменения ранга в КА: ${error}`,
+                        ephemeral: true,
+                    });
+                } else {
+                    await interaction.reply({
+                        content: `Произошла ошибка изменения ранга в КА: ${error}`,
+                        ephemeral: true,
+                    });
+                }
+            } catch (_) {
+                // noop
             }
         }
     },

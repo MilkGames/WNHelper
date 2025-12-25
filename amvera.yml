@@ -1,14 +1,19 @@
+---
+name: WN Helper
+tariffId: "4"
+version: null
 meta:
   environment: node
   toolchain:
     name: npm
-    version: "20"
+    version: 20
 build:
   skip: false
   artifacts:
-    "*": /
+    '*': /
 run:
   scriptName: src/index.js
   command: npm run start
-  persistenceMount: /data
-  containerPort: "80"
+  persistenceMount: app/data
+  containerPort: 80
+serviceType: compute

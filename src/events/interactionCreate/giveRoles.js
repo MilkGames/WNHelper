@@ -15,276 +15,507 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-const { EmbedBuilder } = require('discord.js');
+const {
+	EmbedBuilder,
+	ActionRowBuilder,
+	ModalBuilder,
+	TextInputBuilder,
+	TextInputStyle,
+} = require('discord.js');
+
 const giveRoles = require('../../models/giveRoles');
 const blackListGiveRoles = require('../../models/blackListGiveRoles');
+const giveRolesRequest = require('../../utils/giveRolesRequest');
+const inviteCommand = require('../../commands/wn/ka/invite');
 const config = require('../../../config.json');
 
-async function editReply(type, interaction, userPing, confirmUserIdMention, invite_nick_mention) {
-    let content;
-    switch(type) {
-        case 1:
-            content = `Заявка ${userPing} одобрена.
--# Сообщение удалится через 30 секунд.`;
-            break;
-        case 2:
-            content = `${confirmUserIdMention}, вы не являетесь ${invite_nick_mention} для того, чтобы принять заявку!
--# Сообщение удалится через 30 секунд.`;
-            break;
-        case 3:
-            content = `Заявка ${userPing} отклонена.
--# Сообщение удалится через 30 секунд.`;
-            break;
-        case 4:
-            content = `${confirmUserIdMention}, вы не являетесь лидером фракции или ${invite_nick_mention} для того, чтобы отклонить заявку!
--# Сообщение удалится через 30 секунд.`;
-            break;
-        case 5:
-            content = `Пользователь ${userPing} успешно заблокирован!
--# Сообщение удалится через 30 секунд.`;
-            break;
-        case 6:
-            content = `${confirmUserIdMention}, вы не являетесь лидером фракции для того, чтобы заблокировать пользователя!
--# Сообщение удалится через 30 секунд.`;
-            break;
-    }
+const logger = require('../../utils/logger');
 
-    await interaction.editReply({
-        content: content,
-        ephemeral: true, 
-    });
+function extractDiscordId(text) {
+	if (!text) return null;
+	const m = String(text).match(/(\d{17,20})/);
+	return m ? m[1] : null;
+}
 
-    setTimeout(async () => {
-        try {
-            await interaction.deleteReply();
-        } catch (error) {
-            console.log(`Не удалось удалить ответ: ${error}`);
-        }
-    }, 30000);
-    return;
+async function replyTemp(interaction, content) {
+	await interaction.editReply({ content, ephemeral: true });
+
+	setTimeout(async () => {
+		try {
+			await interaction.deleteReply();
+		} catch (error) {
+			logger.info(`Не удалось удалить ответ: ${error}`);
+		}
+	}, 30000);
+}
+
+function buildGiveRolesModal() {
+	const modal = new ModalBuilder()
+		.setCustomId('gr-submit-modal')
+		.setTitle('Заявка на выдачу ролей');
+
+	const nicknameInput = new TextInputBuilder()
+		.setCustomId('gr-nickname')
+		.setLabel('Имя Фамилия')
+		.setStyle(TextInputStyle.Short)
+		.setPlaceholder('Michael Lindberg')
+		.setRequired(true)
+		.setMaxLength(64);
+
+	const staticInput = new TextInputBuilder()
+		.setCustomId('gr-static')
+		.setLabel('Статик')
+		.setStyle(TextInputStyle.Short)
+		.setPlaceholder('7658')
+		.setRequired(true)
+		.setMaxLength(10);
+
+	const inviteInput = new TextInputBuilder()
+		.setCustomId('gr-invite')
+		.setLabel('Кто принимал (тег или ID)')
+		.setStyle(TextInputStyle.Short)
+		.setPlaceholder('@username или 123456789012345678')
+		.setRequired(true)
+		.setMaxLength(128);
+
+	modal.addComponents(
+		new ActionRowBuilder().addComponents(nicknameInput),
+		new ActionRowBuilder().addComponents(staticInput),
+		new ActionRowBuilder().addComponents(inviteInput),
+	);
+
+	return modal;
+}
+
+async function safeDm(member, text) {
+	try {
+		await member.send(text);
+	} catch (error) {
+		logger.info(`Не удалось отправить ЛС пользователю ${member?.id || member}: ${error}`);
+	}
 }
 
 module.exports = async (client, interaction) => {
-    if (!interaction.isButton()) return;
-    if (!(interaction.customId === 'role-confirm' ||
-        interaction.customId === 'role-db' ||
-        interaction.customId === 'role-decline' ||
-        interaction.customId === 'role-block')) return;
+	// Кнопка "открыть модал"
+	if (interaction.isButton() && interaction.customId === 'gr-open-modal') {
+		try {
+			if (!interaction.inGuild()) return;
 
-    try {
-        await interaction.deferReply({ ephemeral: true });
+			const modal = buildGiveRolesModal();
+			await interaction.showModal(modal);
+		} catch (error) {
+			logger.info(`Не удалось открыть модал выдачи ролей: ${error}`);
+		}
+		return;
+	}
 
-        const guildId = interaction.guildId;
-        const guild = await client.guilds.fetch(guildId);
-        const channel = await client.channels.fetch(config.servers[guildId].confirmRoleChannelId);
-        const kachannel = await client.channels.fetch(config.servers[guildId].kaChannelId);
-        const messageId = interaction.message.id;
-        const message = await channel.messages.fetch(messageId);
-        const confirmUserId = interaction.user.id;
-        const confirmUserIdMention = await guild.members.fetch(confirmUserId);
+	// Отправка модала (создание заявки)
+	if (interaction.isModalSubmit() && interaction.customId === 'gr-submit-modal') {
+		try {
+			await interaction.deferReply({ ephemeral: true });
 
-        const query = {
-            guildId: guildId,
-            messageId: messageId,
-        };
+			const guildId = interaction.guildId;
+			const serverCfg = config.servers[guildId];
+			if (!serverCfg) {
+				await replyTemp(interaction, 'Для этого сервера нет настроек в config.json.');
+				return;
+			}
 
-        const giveRolesList = await giveRoles.findOne(query);
-        const nickname = giveRolesList.nickname;
-        const static = giveRolesList.static;
-        const invite_nick = giveRolesList.invite_nick;
-        const invite_nick_fetch = await guild.members.fetch(invite_nick);
-        const invite_nick_nickname = invite_nick_fetch.displayName;
-        const userId = giveRolesList.userId;
-        let userPing;
-        try {
-            userPing = await client.users.fetch(userId);
-        } catch (error) {
-            userPing = userId;
-        }
-        let invite_nick_mention;
-        try {
-            invite_nick_mention = await client.users.fetch(invite_nick);
-        } catch (error) {
-            invite_nick_mention = invite_nick;
-        }
-        let member
-        try {
-            member = await guild.members.fetch(userId);
-        } catch (error) {
-            member = userId;
-        }
-        const weazelNewsRoleId = config.servers[guildId].weazelNewsRoleId;
-        const traineeRoleId = config.servers[guildId].traineeRoleId;
-        const firstRankRoleId = config.servers[guildId].firstRankRoleId;
-        const thirdRankRoleId = config.servers[guildId].thirdRankRoleId;
-        const retestingRoleId = config.servers[guildId].retestingRoleId;
-        const leaderRoleId = config.servers[guildId].leaderRoleId;
-        let isLeader;
-        if (confirmUserIdMention.roles.cache.has(leaderRoleId)) isLeader = true;
-        else isLeader = false;
-        if (interaction.customId === 'role-confirm' || interaction.customId === 'role-db') {
-            if (confirmUserId === invite_nick || isLeader || config.devs.includes(confirmUserId)) {
-                await giveRoles.deleteOne(query);
-                const editedEmbed = new EmbedBuilder()
-                    .setColor(0x008000)
-                    .setTitle('Заявка на выдачу ролей - ОДОБРЕНА')
-                    .setDescription(`Заявка от ${userPing}. Discord ID: ${userId}.
-Уважаемый сотрудник Weazel News!
-Обратите внимание на то, как записаны Имя Фамилия и статик персонажа!
-Проверьте данные дважды перед тем, как одобрять заявку!
-Пользователь оставил следующие данные:`)
-                    .addFields(
-                        { name: 'Имя Фамилия:', value: nickname },
-                        { name: 'Статик:', value: static },
-                    )
-                    .setTimestamp()
-                    .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
-                message.edit({ embeds: [editedEmbed], components: [] });
-                if (userPing === userId || invite_nick_mention === invite_nick || member === userId) return;
-                const roleIds = [weazelNewsRoleId];
-                if (interaction.customId === 'role-confirm') roleIds.push(firstRankRoleId, traineeRoleId);
-                if (interaction.customId === 'role-db') {
-                    roleIds.push(retestingRoleId, thirdRankRoleId);
-                    if (guildId !== "1249711898744848415") roleIds.push(traineeRoleId);
-                }
-                for (const roleId of roleIds) {
-                    const role = guild.roles.cache.get(roleId);
-                    if (role) {
-                        await member.roles.add(role);
-                    } else {
-                        await interaction.editReply({
-                            content: `Роль ${roleId} испарилась с лица земли.`,
-                            ephemeral: true,
-                        });
-                    }
-                }
-                const citizenRoleId = config.servers[guildId].citizenRoleId;
-                if (member.roles.cache.has(citizenRoleId)) await member.roles.remove(citizenRoleId);
-                let preNickName;
-                preNickName = `TD | ${nickname} | ${static}`;
-                let newNickName;
-                if (preNickName.length > 32) {
-                    let firstSpace;
-                    for (let i = 0; i < nickname.length; i++) {
-                        if (nickname[i] === ' ') {
-                            firstSpace = i;
-                            newNickName = `TD | ${nickname.slice(0, i+2)}. | ${static}`;
-                            break;
-                        }
-                    }
-                }
-                else {
-                    newNickName = preNickName;
-                }
-                try {
-                    member.setNickname(`${newNickName}`);
-                } catch (error) {
-                    console.log(`Ещё один чел поставил ник больше 32 символов. ${error}`);
-                }
-                let rank;
-                let reason;
-                if (interaction.customId === 'role-confirm') {
-                    rank = '1';
-                    reason = 'Собеседование';
-                }
-                else {
-                    rank = '3';
-                    reason = 'ДБ';
-                }
-                const kainviteEmbed = new EmbedBuilder()
-                    .setColor(0x3498DB)
-                    .setTitle('Кадровый аудит • Принятие')
-                    .addFields(
-                        { name: 'Принял(-а):', value: `${invite_nick_mention} | ${invite_nick_nickname} | ||${invite_nick}||` },
-                        { name: 'Принят(-а):', value: `${userPing} | ${preNickName} | ||${userId}||` },
-                        { name: 'Номер ID карты:', value: `${static}`, inline: true },
-                        { name: 'Действие:', value: `Принят на ${rank}`, inline: true },
-                        { name: 'Причина:', value: `${reason}` },
-                    )
-                    .setTimestamp()
-                    .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
-                kachannel.send({ embeds: [kainviteEmbed] });
-                editReply(1, interaction, userPing, confirmUserIdMention, invite_nick_mention);
-                await member.send(`${userPing}, ${invite_nick_mention} одобрил вашу заявку!
-Добро пожаловать в Weazel News!`);
-                return;
-            }
-            else {
-                editReply(2, interaction, userPing, confirmUserIdMention, invite_nick_mention);
-                return;
-            }
-        }
+			const nickname = interaction.fields.getTextInputValue('gr-nickname')?.trim();
+			const staticId = interaction.fields.getTextInputValue('gr-static')?.trim();
+			const inviteRaw = interaction.fields.getTextInputValue('gr-invite')?.trim();
 
-        if (interaction.customId === 'role-decline') {
-            if (confirmUserId === invite_nick || isLeader || config.devs.includes(confirmUserId)) {
-                await giveRoles.deleteOne(query);
-                const editedEmbed = new EmbedBuilder()
-                    .setColor(0xFF2C2C)
-                    .setTitle('Заявка на выдачу ролей - ОТКЛОНЕНА')
-                    .setDescription(`Заявка от ${userPing}. Discord ID: ${userId}.
-Уважаемый сотрудник Weazel News!
-Обратите внимание на то, как записаны Имя Фамилия и статик персонажа!
-Проверьте данные дважды перед тем, как одобрять заявку!
-Пользователь оставил следующие данные:`)
-                    .addFields(
-                        { name: 'Имя Фамилия:', value: nickname },
-                        { name: 'Статик:', value: static },
-                    )
-                    .setTimestamp()
-                    .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
-                message.edit({ embeds: [editedEmbed], components: [] });
-                editReply(3, interaction, userPing, confirmUserIdMention, invite_nick_mention);
-                if (userPing === userId || invite_nick_mention === invite_nick || member === userId) return;
-                await member.send(`${userPing}, к сожалению, ${invite_nick_mention} отклонил вашу заявку.
-Свяжитесь с сотрудником, чтобы выяснить причину.`);
-                return;
-            }
-            else {
-                editReply(4, interaction, userPing, confirmUserIdMention, invite_nick_mention);
-                return;
-            }
-        }
+			if (!giveRolesRequest.validateNickname(nickname)) {
+				await replyTemp(
+					interaction,
+					'Вы не использовали пробел или использовали знак _ в никнейме.\nУкажите корректный ник, который отображается у вас в игре.\n-# Сообщение удалится через 30 секунд.'
+				);
+				return;
+			}
 
-        if (interaction.customId === 'role-block') {
-            if (isLeader || config.devs.includes(confirmUserId)) {
-                const newBlackListGiveRoles = new blackListGiveRoles({
-                    guildId: guildId,
-                    userId: userId,
-                });
-                newBlackListGiveRoles.save();
-                await giveRoles.deleteOne(query);
-                const editedEmbed = new EmbedBuilder()
-                    .setColor(0xFF2C2C)
-                    .setTitle('Заявка на выдачу ролей - ПОЛЬЗОВАТЕЛЬ ЗАБЛОКИРОВАН')
-                    .setDescription(`Заявка от ${userPing}. Discord ID: ${userId}.
-Уважаемый сотрудник Weazel News!
-Обратите внимание на то, как записаны Имя Фамилия и статик персонажа!
-Проверьте данные дважды перед тем, как одобрять заявку!
-Пользователь оставил следующие данные:`)
-                    .addFields(
-                        { name: 'Имя Фамилия:', value: nickname },
-                        { name: 'Статик:', value: static },
-                    )
-                    .setTimestamp()
-                    .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
-                message.edit({ embeds: [editedEmbed], components: [] });
-                editReply(5, interaction, userPing, confirmUserIdMention, invite_nick_mention);
-                if (userPing === userId || invite_nick_mention === invite_nick || member === userId) return;
-                await member.send(`${userPing}, вы были заблокированы за злоупотребление функционалом бота!`);
-                return;
-            }
-            else {
-                editReply(6, interaction, userPing, confirmUserIdMention, invite_nick_mention);
-                return;
-            }
-        }
-    } catch (error) {
-        console.log(`Произошла ошибка при нажатии на кнопку, связанную с выдачей ролей: ${error}.`);
-        if (!interaction.replied){
-            await interaction.editReply({
-                content: `Произошла ошибка при нажатии на кнопку, связанную с выдачей ролей: ${error}`,
-                ephemeral: true,
-            });
-        }
-    }
+			if (!giveRolesRequest.validateStatic(staticId)) {
+				await replyTemp(
+					interaction,
+					'Статик указан некорректно. Допустимы только цифры.\n-# Сообщение удалится через 30 секунд.'
+				);
+				return;
+			}
+
+			const inviteUserId = extractDiscordId(inviteRaw);
+			if (!inviteUserId) {
+				await replyTemp(
+					interaction,
+					'Не удалось определить сотрудника, который вас принимал.\nУкажите тег (@user) или Discord ID.\n-# Сообщение удалится через 30 секунд.'
+				);
+				return;
+			}
+
+			const guild = await client.guilds.fetch(guildId);
+			const inviteMember = await guild.members.fetch(inviteUserId).catch(() => null);
+			if (!inviteMember) {
+				await replyTemp(
+					interaction,
+					'Не удалось найти указанного сотрудника на сервере.\nПроверьте тег/ID.\n-# Сообщение удалится через 30 секунд.'
+				);
+				return;
+			}
+
+			const userId = interaction.user.id;
+
+			const result = await giveRolesRequest.createGiveRolesRequest(
+				client,
+				guildId,
+				userId,
+				nickname,
+				staticId,
+				inviteUserId
+			);
+
+			if (!result.ok) {
+				if (result.code === 'blacklist') {
+					await replyTemp(
+						interaction,
+						'Действие невозможно. Вы попали в чёрный список выдачи ролей.\n-# Сообщение удалится через 30 секунд.'
+					);
+					return;
+				}
+				if (result.code === 'exists') {
+					const inviteMention = result.inviteUserId ? `<@${result.inviteUserId}>` : `${inviteMember}`;
+					await replyTemp(
+						interaction,
+						`<@${userId}>, вы уже отправляли заявку!\nОжидайте, пока сотрудник ${inviteMention} её рассмотрит.\nВы получите оповещение как только получите роли.\n-# Сообщение удалится через 30 секунд.`
+					);
+					return;
+				}
+				if (result.code === 'no_channel') {
+					await replyTemp(interaction, 'Не удалось найти канал для заявок. Проверьте настройки сервера.');
+					return;
+				}
+
+				await replyTemp(interaction, `Не удалось отправить заявку. Код ошибки: ${result.code}`);
+				return;
+			}
+
+			await replyTemp(
+				interaction,
+				`Спасибо, <@${userId}>, ваша заявка принята!\nОжидайте, пока сотрудник <@${inviteUserId}> её рассмотрит.\nВы получите оповещение как только получите роли.\n-# Сообщение удалится через 30 секунд.`
+			);
+		} catch (error) {
+			logger.info(`Произошла ошибка при отправке заявки через модал: ${error}`);
+			try {
+				if (interaction.deferred || interaction.replied) {
+					await interaction.editReply({
+						content: `Произошла ошибка при отправке заявки: ${error}`,
+						ephemeral: true,
+					});
+				}
+			} catch (_) {
+				// noop
+			}
+		}
+		return;
+	}
+
+	// Кнопки обработки заявки (одобрить/отклонить/блок)
+	if (!interaction.isButton()) return;
+
+	if (!(interaction.customId === 'role-confirm' ||
+		interaction.customId === 'role-db' ||
+		interaction.customId === 'role-decline' ||
+		interaction.customId === 'role-block')) {
+		return;
+	}
+
+	try {
+		await interaction.deferReply({ ephemeral: true });
+
+		const guildId = interaction.guildId;
+		const serverCfg = config.servers[guildId];
+		if (!serverCfg) {
+			await replyTemp(interaction, 'Для этого сервера нет настроек в config.json.');
+			return;
+		}
+
+		const guild = await client.guilds.fetch(guildId);
+
+		const confirmChannel = await client.channels.fetch(serverCfg.confirmRoleChannelId).catch(() => null);
+		const kaChannel = await client.channels.fetch(serverCfg.kaChannelId).catch(() => null);
+
+		const messageId = interaction.message.id;
+
+		const query = {
+			guildId,
+			messageId,
+		};
+
+		const giveRolesList = await giveRoles.findOne(query);
+		if (!giveRolesList) {
+			// Заявка уже обработана/удалена
+			try {
+				await interaction.message.edit({ components: [] });
+			} catch (_) {
+				// noop
+			}
+			await replyTemp(interaction, 'Заявка уже обработана или не найдена.\n-# Сообщение удалится через 30 секунд.');
+			return;
+		}
+
+		const nickname = giveRolesList.nickname;
+		const staticId = giveRolesList.static;
+		const inviteUserId = giveRolesList.invite_nick;
+		const userId = giveRolesList.userId;
+
+		const confirmUserId = interaction.user.id;
+		const confirmMember = await guild.members.fetch(confirmUserId).catch(() => null);
+		if (!confirmMember) {
+			await replyTemp(interaction, 'Не удалось определить ваши роли на сервере.\n-# Сообщение удалится через 30 секунд.');
+			return;
+		}
+
+		const leaderRoleId = serverCfg.leaderRoleId;
+		const depLeaderRoleId = serverCfg.depLeaderRoleId;
+
+		const isLeader =
+			(leaderRoleId && confirmMember.roles.cache.has(leaderRoleId)) ||
+			(depLeaderRoleId && confirmMember.roles.cache.has(depLeaderRoleId));
+
+		const isDev = Array.isArray(config.devs) && config.devs.includes(confirmUserId);
+		const isInviter = confirmUserId === inviteUserId;
+
+		// Пытаемся получить сообщение из канала заявок (если получилось), иначе используем interaction.message
+		let message = interaction.message;
+		if (confirmChannel && typeof confirmChannel.messages?.fetch === 'function') {
+			message = await confirmChannel.messages.fetch(messageId).catch(() => interaction.message);
+		}
+
+		const userMention = `<@${userId}>`;
+		const inviteMention = `<@${inviteUserId}>`;
+
+		const preNickName = `TD | ${nickname} | ${staticId}`;
+
+		let member = await guild.members.fetch(userId).catch(() => null);
+
+		const weazelNewsRoleId = serverCfg.weazelNewsRoleId;
+		const traineeRoleId = serverCfg.traineeRoleId;
+		const firstRankRoleId = serverCfg.firstRankRoleId;
+		const thirdRankRoleId = serverCfg.thirdRankRoleId;
+		const retestingRoleId = serverCfg.retestingRoleId;
+		const citizenRoleId = serverCfg.citizenRoleId;
+
+		const canApprove = isInviter || isLeader || isDev;
+		const canDecline = isInviter || isLeader || isDev;
+		const canBlock = isLeader || isDev;
+
+		if (interaction.customId === 'role-confirm' || interaction.customId === 'role-db') {
+			if (!canApprove) {
+				await replyTemp(
+					interaction,
+					`${confirmMember}, вы не являетесь ${inviteMention} для того, чтобы принять заявку!\n-# Сообщение удалится через 30 секунд.`
+				);
+				return;
+			}
+
+			await giveRoles.deleteOne(query);
+
+			const editedEmbed = new EmbedBuilder()
+				.setColor(0x008000)
+				.setTitle('Заявка на выдачу ролей - ОДОБРЕНА')
+				.setDescription(
+					`Заявка от ${userMention}. Discord ID: ${userId}.\n` +
+					`Уважаемый сотрудник Weazel News!\n` +
+					`Обратите внимание на то как записаны Имя Фамилия и статик персонажа!\n` +
+					`Проверьте данные дважды перед тем, как одобрять заявку!\n` +
+					`Пользователь оставил следующие данные:`
+				)
+				.addFields(
+					{ name: 'Имя Фамилия:', value: nickname },
+					{ name: 'Статик:', value: staticId },
+				)
+				.setTimestamp()
+				.setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+
+			await message.edit({ embeds: [editedEmbed], components: [] });
+
+			let rank;
+			let reason;
+
+			if (interaction.customId === 'role-confirm') {
+				rank = '1';
+				reason = 'Собеседование';
+			} else {
+				rank = '3';
+				reason = 'ДБ';
+			}
+
+			// Запись в КА теперь через invite.js
+			if (kaChannel) {
+				const inviterMember = await guild.members.fetch(inviteUserId).catch(() => null);
+				if (!inviterMember) {
+					logger.error(`giveRoles: не удалось получить пригласившего ${inviteUserId} для записи принятия в КА`);
+				} else {
+					const ok = await inviteCommand.sendKaInviteRecord(client, {
+						guildId,
+						kaChannel,
+						inviterId: inviteUserId,
+						inviterDisplayName: inviterMember.displayName,
+						acceptedId: userId,
+						acceptedDisplayName: preNickName,
+						staticId,
+						rank,
+						reason,
+					});
+
+					if (!ok) {
+						logger.error(`giveRoles: не удалось отправить запись принятия в КА (userId=${userId}, inviterId=${inviteUserId})`);
+					}
+				}
+			}
+
+			// Даже если пользователя уже нет на сервере — заявка считается обработанной, просто пропускаем выдачу ролей/ЛС.
+			if (member) {
+				const roleIds = [weazelNewsRoleId];
+
+				if (interaction.customId === 'role-confirm') {
+					roleIds.push(firstRankRoleId, traineeRoleId);
+				}
+
+				if (interaction.customId === 'role-db') {
+					roleIds.push(retestingRoleId, thirdRankRoleId, traineeRoleId);
+				}
+
+				for (const roleId of roleIds) {
+					const role = guild.roles.cache.get(roleId);
+					if (role) {
+						await member.roles.add(role);
+					} else {
+						logger.error(`Не удалось найти роль ${roleId} на сервере ${guildId}.`);
+					}
+				}
+
+				if (citizenRoleId && member.roles.cache.has(citizenRoleId)) {
+					await member.roles.remove(citizenRoleId);
+				}
+
+				let newNickName = preNickName;
+
+				if (preNickName.length > 32) {
+					for (let i = 0; i < nickname.length; i++) {
+						if (nickname[i] === ' ') {
+							newNickName = `TD | ${nickname.slice(0, i + 2)}. | ${staticId}`;
+							break;
+						}
+					}
+				}
+
+				try {
+					await member.setNickname(`${newNickName}`);
+				} catch (error) {
+					logger.error(`Не удалось изменить ник пользователю ${userId}: ${error}`);
+				}
+
+				await safeDm(member, `${userMention}, ${inviteMention} одобрил вашу заявку!\nДобро пожаловать в Weazel News!`);
+			}
+
+			await replyTemp(interaction, `Заявка ${userMention} одобрена.\n-# Сообщение удалится через 30 секунд.`);
+			return;
+		}
+
+		if (interaction.customId === 'role-decline') {
+			if (!canDecline) {
+				await replyTemp(
+					interaction,
+					`${confirmMember}, вы не являетесь лидером фракции или ${inviteMention} для того, чтобы отклонить заявку!\n-# Сообщение удалится через 30 секунд.`
+				);
+				return;
+			}
+
+			await giveRoles.deleteOne(query);
+
+			const editedEmbed = new EmbedBuilder()
+				.setColor(0xFF2C2C)
+				.setTitle('Заявка на выдачу ролей - ОТКЛОНЕНА')
+				.setDescription(
+					`Заявка от ${userMention}. Discord ID: ${userId}.\n` +
+					`Уважаемый сотрудник Weazel News!\n` +
+					`Обратите внимание на то как записаны Имя Фамилия и статик персонажа!\n` +
+					`Проверьте данные дважды перед тем, как одобрять заявку!\n` +
+					`Пользователь оставил следующие данные:`
+				)
+				.addFields(
+					{ name: 'Имя Фамилия:', value: nickname },
+					{ name: 'Статик:', value: staticId },
+				)
+				.setTimestamp()
+				.setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+
+			await message.edit({ embeds: [editedEmbed], components: [] });
+
+			if (member) {
+				await safeDm(
+					member,
+					`${userMention}, к сожалению, ${inviteMention} отклонил вашу заявку.\nСвяжитесь с сотрудником, чтобы выяснить причину.`
+				);
+			}
+
+			await replyTemp(interaction, `Заявка ${userMention} отклонена.\n-# Сообщение удалится через 30 секунд.`);
+			return;
+		}
+
+		if (interaction.customId === 'role-block') {
+			if (!canBlock) {
+				await replyTemp(
+					interaction,
+					`${confirmMember}, вы не являетесь лидером фракции для того, чтобы заблокировать пользователя!\n-# Сообщение удалится через 30 секунд.`
+				);
+				return;
+			}
+
+			const blQuery = { guildId, userId };
+			const existed = await blackListGiveRoles.findOne(blQuery);
+			if (!existed) {
+				const newBlackListGiveRoles = new blackListGiveRoles({ guildId, userId });
+				await newBlackListGiveRoles.save();
+			}
+
+			await giveRoles.deleteOne(query);
+
+			const editedEmbed = new EmbedBuilder()
+				.setColor(0xFF2C2C)
+				.setTitle('Заявка на выдачу ролей - ПОЛЬЗОВАТЕЛЬ ЗАБЛОКИРОВАН')
+				.setDescription(
+					`Заявка от ${userMention}. Discord ID: ${userId}.\n` +
+					`Уважаемый сотрудник Weazel News!\n` +
+					`Обратите внимание на то как записаны Имя Фамилия и статик персонажа!\n` +
+					`Проверьте данные дважды перед тем, как одобрять заявку!\n` +
+					`Пользователь оставил следующие данные:`
+				)
+				.addFields(
+					{ name: 'Имя Фамилия:', value: nickname },
+					{ name: 'Статик:', value: staticId },
+				)
+				.setTimestamp()
+				.setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+
+			await message.edit({ embeds: [editedEmbed], components: [] });
+
+			if (member) {
+				await safeDm(member, `${userMention}, вы были заблокированы за злоупотребление функционалом бота!`);
+			}
+
+			await replyTemp(interaction, `Пользователь ${userMention} успешно заблокирован!\n-# Сообщение удалится через 30 секунд.`);
+			return;
+		}
+	} catch (error) {
+		logger.info(`Произошла ошибка при нажатии на кнопку, связанную с выдачей ролей: ${error}`);
+		try {
+			if (interaction.deferred || interaction.replied) {
+				await interaction.editReply({
+					content: `Произошла ошибка при обработке заявки: ${error}`,
+					ephemeral: true,
+				});
+			}
+		} catch (_) {
+			// noop
+		}
+	}
 };

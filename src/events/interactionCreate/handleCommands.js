@@ -17,22 +17,44 @@
 */
 const { devs, testServer } = require('../../../config.json');
 const getLocalCommands = require('../../utils/getLocalCommands');
+const logger = require('../../utils/logger');
+
+async function safeReply(interaction, payload) {
+    try {
+        if (interaction.deferred || interaction.replied) {
+            return await interaction.editReply(payload);
+        }
+        return await interaction.reply(payload);
+    } catch (_) {
+        // игнорируем "Unknown interaction" и подобные
+    }
+}
 
 module.exports = async (client, interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
     const localCommands = getLocalCommands();
+    const commandObject = localCommands.find((cmd) => cmd.name === interaction.commandName);
+    if (!commandObject) return;
+
+    const ctx = {
+        command: commandObject.name,
+        userId: interaction.user?.id,
+        guildId: interaction.guildId || null,
+        channelId: interaction.channelId || null,
+    };
+
+    logger.info('Команда стартовала', ctx);
 
     try {
-        const commandObject = localCommands.find(
-            (cmd) => cmd.name === interaction.commandName
-        );
-
-        if (!commandObject) return;
-
-        if (commandObject.devOnly){
-            if (!devs.includes(interaction.member.id)){
-                await interaction.reply({
+        // DEV ONLY
+        if (commandObject.devOnly) {
+            if (!interaction.inGuild() || !interaction.member) {
+                await safeReply(interaction, { content: 'Эта команда доступна только на сервере.', ephemeral: true });
+                return;
+            }
+            if (!devs.includes(interaction.member.id)) {
+                await safeReply(interaction, {
                     content: 'Данная команда доступна только для разработчиков!',
                     ephemeral: true,
                 });
@@ -40,42 +62,76 @@ module.exports = async (client, interaction) => {
             }
         }
 
-        if (commandObject.testOnly){
-            if (!(interaction.guild.id === testServer)){
-                await interaction.reply({
-                    content: `Данная команда доступна только на тестовом сервере!`,
+        // TEST ONLY
+        if (commandObject.testOnly) {
+            if (!interaction.inGuild() || interaction.guildId !== testServer) {
+                await safeReply(interaction, {
+                    content: 'Данная команда доступна только на тестовом сервере!',
                     ephemeral: true,
                 });
                 return;
             }
         }
 
-        if (commandObject.permissionsRequired?.length){
-            for (const permission of commandObject.permissionsRequired){
-                if (!interaction.member.permissions.has(permission)){
-                    await interaction.reply({
-                        content: "У вас недостаточно прав для запуска данной команды.",
-                        ephemeral: true,
-                    });
-                    return;
-                }
-            }   
-        }
+        // MEMBER PERMISSIONS
+        if (commandObject.permissionsRequired?.length) {
+            if (!interaction.inGuild() || !interaction.memberPermissions) {
+                await safeReply(interaction, {
+                    content: 'Эта команда требует прав, поэтому работает только на сервере.',
+                    ephemeral: true,
+                });
+                return;
+            }
 
-        if (commandObject.botPermissions?.length){
-            for (const permission of commandObject.botPermissions){
-                const bot = interaction.guild.members.me;
-                if (!bot.permissions.has(permission)){
-                    await interaction.reply({
-                        content: "У меня недостаточно прав для запуска данной команды...",
+            for (const permission of commandObject.permissionsRequired) {
+                if (!interaction.memberPermissions.has(permission)) {
+                    await safeReply(interaction, {
+                        content: 'У вас недостаточно прав для запуска данной команды.',
                         ephemeral: true,
                     });
                     return;
                 }
             }
         }
+
+        // BOT PERMISSIONS
+        if (commandObject.botPermissions?.length) {
+            if (!interaction.inGuild()) {
+                await safeReply(interaction, {
+                    content: 'Эта команда требует прав бота, поэтому работает только на сервере.',
+                    ephemeral: true,
+                });
+                return;
+            }
+
+            const botMember = interaction.guild?.members?.me;
+            if (!botMember) {
+                await safeReply(interaction, {
+                    content: 'Не удалось получить права бота на сервере. Попробуйте позже.',
+                    ephemeral: true,
+                });
+                return;
+            }
+
+            for (const permission of commandObject.botPermissions) {
+                if (!botMember.permissions.has(permission)) {
+                    await safeReply(interaction, {
+                        content: 'У меня недостаточно прав для запуска данной команды...',
+                        ephemeral: true,
+                    });
+                    return;
+                }
+            }
+        }
+
         await commandObject.callback(client, interaction);
+
+        logger.info('Команда выполнена', ctx);
     } catch (error) {
-        console.log(`Произошла общая ошибка при запуске команды: ${error}`);
+        logger.error('Команда завершилась с ошибкой', ctx, error);
+        await safeReply(interaction, {
+            content: 'Произошла ошибка при выполнении команды. Ошибка залогирована.',
+            ephemeral: true,
+        });
     }
 };

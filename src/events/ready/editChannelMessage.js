@@ -18,13 +18,21 @@
 const { EmbedBuilder } = require('discord.js');
 const config = require('../../../config.json');
 
+const logger = require('../../utils/logger');
+
 function getMembers(members, max){
-    let memberPings = members.map(member => `> <@${member.user.id}>`).join('\n');
-    if (max == 0 && !memberPings) {
+    const list = Array.from(members?.values ? members.values() : members || []);
+    const size = list.length;
+
+    let memberPings = list.map(member => `> <@${member.user.id}>`).join('\n');
+    if ((max || 0) === 0 && !memberPings) {
         memberPings += "> Отсутствует.";
     }
-    for (i = 0; i < max - members.size; i++) {
+    for (let i = size; i < (max || 0); i++) {
         memberPings += "\n> Место вакантно.";
+    }
+    if (memberPings.length > 1000) {
+        memberPings = memberPings.slice(0, 1000) + "\n... (список обрезан)";
     }
     return memberPings;
 }
@@ -44,8 +52,7 @@ module.exports = async (client) => {
             const partWorkAMDRoleId = config.servers[serverId].partWorkAMDRoleId;
             const partWorkEDRoleId = config.servers[serverId].partWorkEDRoleId;
             const partWorkJDRoleId = config.servers[serverId].partWorkJDRoleId;
-            const depHeadRDRoleId = config.servers[serverId].depHeadRDRoleId;
-            const depHeadDDRoleId = config.servers[serverId].depHeadDDRoleId;
+            const depHeadRDDRoleId = config.servers[serverId].depHeadRDDRoleId;
             const depHeadAMDRoleId = config.servers[serverId].depHeadAMDRoleId;
             const depHeadEDRoleId = config.servers[serverId].depHeadEDRoleId;
             const depHeadJDRoleId = config.servers[serverId].depHeadJDRoleId;
@@ -87,25 +94,30 @@ module.exports = async (client) => {
                         .setTimestamp()
                         .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
                 
-                    members = await guild.members.fetch();
+                    let members;
+                    try {
+                        members = await guild.members.fetch({ time: 20000, withPresences: false });
+                    } catch (err) {
+                        members = guild.members.cache;
+                    }
 
                     // проход по кураторам
                     RDDCurators = members.filter(member => 
                         member.roles.cache.has(headRDDRoleId) &&
-                        member.roles.cache.has(depLeaderRoleId) &&
-                        !member.roles.cache.has(leaderRoleId));
+                        (member.roles.cache.has(depLeaderRoleId) ||
+                        member.roles.cache.has(leaderRoleId)));
                     AMDCurators = members.filter(member => 
                         member.roles.cache.has(headAMDRoleId) &&
-                        member.roles.cache.has(depLeaderRoleId) &&
-                        !member.roles.cache.has(leaderRoleId));
+                        (member.roles.cache.has(depLeaderRoleId) ||
+                        member.roles.cache.has(leaderRoleId)));
                     EDCurators = members.filter(member => 
                         member.roles.cache.has(headEDRoleId) &&
-                        member.roles.cache.has(depLeaderRoleId) &&
-                        !member.roles.cache.has(leaderRoleId));
+                        (member.roles.cache.has(depLeaderRoleId) ||
+                        member.roles.cache.has(leaderRoleId)));
                     JDCurators = members.filter(member => 
                         member.roles.cache.has(headJDRoleId) &&
-                        member.roles.cache.has(depLeaderRoleId) &&
-                        !member.roles.cache.has(leaderRoleId));
+                        (member.roles.cache.has(depLeaderRoleId) ||
+                        member.roles.cache.has(leaderRoleId)));
 
                     rddEmbed.addFields({ name: "Следящий за отделом:", value: getMembers(RDDCurators, 0) });
                     amdEmbed.addFields({ name: "Следящий за отделом:", value: getMembers(AMDCurators, 0) });
@@ -145,25 +157,22 @@ module.exports = async (client) => {
 
                     // проход по депам
 
-                    RDDepHead = members.filter(member => member.roles.cache.has(depHeadRDRoleId));
-                    DDDepHead = members.filter(member => member.roles.cache.has(depHeadDDRoleId));
+                    RDDDepHead = members.filter(member => member.roles.cache.has(depHeadRDDRoleId));
                     AMDDepHead = members.filter(member => member.roles.cache.has(depHeadAMDRoleId));
                     EDDepHead = members.filter(member => member.roles.cache.has(depHeadEDRoleId));
                     JDDepHead = members.filter(member => member.roles.cache.has(depHeadJDRoleId));
 
-                    rddEmbed.addFields({ name: "Заместитель главы отдела DD:", value: getMembers(DDDepHead, 1) });
-                    rddEmbed.addFields({ name: "Заместители главы отдела RD:", value: getMembers(RDDepHead, 2) });
-                    amdEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(AMDDepHead, 3) });
-                    edEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(EDDepHead, 3) });
-                    jdEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(JDDepHead, 3) });
+                    rddEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(RDDDepHead, 2) });
+                    amdEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(AMDDepHead, 2) });
+                    edEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(EDDepHead, 2) });
+                    jdEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(JDDepHead, 2) });
 
                     // основной состав
 
                     RDD = members.filter(member => 
                         member.roles.cache.has(RDDRoleId) &&
                         !member.roles.cache.has(headRDDRoleId) &&
-                        !member.roles.cache.has(depHeadRDRoleId) &&
-                        !member.roles.cache.has(depHeadDDRoleId) &&
+                        !(depHeadRDDRoleId && member.roles.cache.has(depHeadRDDRoleId)) &&
                         !member.roles.cache.has(traineeRoleId));
                     AMD = members.filter(member => 
                         member.roles.cache.has(AMDRoleId) &&
@@ -237,6 +246,6 @@ module.exports = async (client) => {
             }
         }
     } catch (error) {
-        console.log(`Произошла ошибка при обновлении сообщения в канале: ${error}`);
+        logger.info(`Произошла ошибка при обновлении сообщения в канале: ${error}`);
     }
 }

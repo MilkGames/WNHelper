@@ -18,6 +18,8 @@
 const config = require('../../../../config.json');
 const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
+const logger = require('../../../utils/logger');
+
 module.exports = {
     name: 'createrules',
     description: 'Добавляет сообщение с правилами дискорда в выбранном канале.',
@@ -89,7 +91,7 @@ module.exports = {
             });
             return;
         } catch (error) {
-            console.log(`Произошла ошибка при публикации правил: ${error}.`);
+            logger.info(`Произошла ошибка при публикации правил: ${error}.`);
             await interaction.reply({
                 content: `Произошла ошибка при публикации правил: ${error}.`,
                 ephemeral: true,

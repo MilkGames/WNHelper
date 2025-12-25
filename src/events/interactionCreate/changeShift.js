@@ -15,344 +15,270 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-const { ActionRowBuilder } = require('discord.js');
+
 const config = require('../../../config.json');
 const amdShifts = require('../../models/amdShifts');
+const logger = require('../../utils/logger');
 
-async function editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest) {
-    let content;
-    if (badRequest) {
-        content = `${userIdMention}, вы не являетесь человеком в смене или <@&${headAMDRoleId}> для того, чтобы убрать ${currentMemberMention} смены!
--# Сообщение удалится через 30 секунд.`;
-    }
-    if (deleted) {
-        if (currentMember === userId) {
-            content = `${userIdMention}, вы успешно удалили себя со смены №${shiftNumber}!
--# Сообщение удалится через 30 секунд.`;
-        }
-        else {
-            content = `${userIdMention}, вы успешно удалили сотрудника ${currentMemberMention} со смены №${shiftNumber}!
--# Сообщение удалится через 30 секунд.`;
-        }
-    }
-    else {
-        content = `${userIdMention}, вы успешно заняли смену №${shiftNumber}!
--# Сообщение удалится через 30 секунд.`;
-    }
-    await interaction.editReply({
-        content: content,
-        ephemeral: true,
-    });
+const {
+	FREE_SHIFT_VALUE,
+	SHIFT_MAP,
+	buildShiftLines,
+	buildScheduleMessageContent,
+	buildAccessPlan,
+	buildAccessSection,
+	formatRoleMentions,
+	getMemberCategory,
+} = require('../../utils/amdShiftUtils');
 
-    setTimeout(async () => {
-        try {
-            await interaction.deleteReply();
-        } catch (error) {
-            console.log(`Не удалось удалить ответ: ${error}`);
-        }
-    }, 30000);
-    return;
+async function safeReply(interaction, payload) {
+	if (interaction.replied || interaction.deferred) {
+		return interaction.editReply(payload).catch(() => {});
+	}
+	return interaction.reply(payload).catch(() => {});
 }
 
-async function threadEdit(message, shiftNumber, formattedDate, currentMember, currentMemberMention, userId, userIdMention, deleted) {
-    const existingThread = message.channel.threads.cache.find(thread => thread.name === `Логи ${formattedDate}`);
-
-    let thread;
-    if (existingThread) thread = existingThread;
-    else {
-        thread = await message.startThread({
-            name: `Логи ${formattedDate}`,
-            autoArchiveDuration: 60,
-        });
-    }
-
-    if (deleted) {
-        if (currentMember === userId) {
-            await thread.send(`${userIdMention} удалил себя со смены №${shiftNumber}!`);
-        }
-        else {
-            await thread.send(`${userIdMention} удалил сотрудника ${currentMemberMention} со смены №${shiftNumber}!`);
-        }
-    }
-    else {
-        await thread.send(`${userIdMention} занял смену №${shiftNumber}!`);
-    }
-    return;
+function countUserShifts(shiftsRecord, userId) {
+	if (!shiftsRecord || !userId) return 0;
+	let count = 0;
+	for (const shift of SHIFT_MAP) {
+		if (shiftsRecord[shift.field] === userId) count += 1;
+	}
+	return count;
 }
 
-async function enableButtons(message) {
-    const updatedComponents = message.components.map(row => {
-        const actionRow = ActionRowBuilder.from(row);
-        actionRow.components.forEach(button => button.setDisabled(false));
-        return actionRow;
-    });
+async function replyAndAutoDelete(interaction, content) {
+	await safeReply(interaction, { content, ephemeral: true });
+	setTimeout(async () => {
+		try {
+			if (interaction.deferred || interaction.replied) {
+				await interaction.deleteReply();
+			}
+		} catch (error) {
+			logger.error(`AMD смены: не удалось удалить ответ интеракции: ${error}`);
+		}
+	}, 30000);
+}
 
-    await message.edit({ components: updatedComponents });
+async function threadEdit(message, shiftNumber, formattedDate, currentMember, userId, userMentionText, deleted) {
+	const threadName = `Смены ${formattedDate}`;
+	const existingThread = message.channel.threads.cache.find((thread) => thread.name === threadName);
+
+	let thread = existingThread;
+	if (!thread) {
+		thread = await message.startThread({
+			name: threadName,
+			autoArchiveDuration: 60,
+		});
+	}
+
+	if (deleted) {
+		if (currentMember === userId) {
+			await thread.send(`${userMentionText} снял себя со смены номер ${shiftNumber}.`);
+		} else {
+			const currentMention = /^\d{17,20}$/.test(String(currentMember)) ? `<@${currentMember}>` : currentMember;
+			await thread.send(`${userMentionText} снял ${currentMention} со смены номер ${shiftNumber}.`);
+		}
+		return;
+	}
+
+	await thread.send(`${userMentionText} занял смену номер ${shiftNumber}.`);
+}
+
+function buildOutcomeText({ shiftNumber, currentMember, userId, userMentionText, headRoleId, deleted, badRequest }) {
+	if (badRequest) {
+		const mentionText = /^\d{17,20}$/.test(String(currentMember)) ? `<@${currentMember}>` : currentMember;
+		return `${userMentionText}, смена номер ${shiftNumber} уже занята ${mentionText}. Попроси его или <@&${headRoleId}> освободить её.`;
+	}
+
+	if (deleted) {
+		if (currentMember === userId) {
+			return `${userMentionText}, ты снялся со смены номер ${shiftNumber}.`;
+		}
+		const mentionText = /^\d{17,20}$/.test(String(currentMember)) ? `<@${currentMember}>` : currentMember;
+		return `${userMentionText}, ты снял ${mentionText} со смены номер ${shiftNumber}.`;
+	}
+
+	return `${userMentionText}, ты занял смену номер ${shiftNumber}.`;
 }
 
 module.exports = async (client, interaction) => {
-    try {
-        if (!interaction.isButton()) return;
-        if (!(interaction.customId === 'shift-one' ||
-            interaction.customId === 'shift-two' ||
-            interaction.customId === 'shift-three' ||
-            interaction.customId === 'shift-four' ||
-            interaction.customId === 'shift-five' ||
-            interaction.customId === 'shift-six' ||
-            interaction.customId === 'shift-seven' ||
-            interaction.customId === 'shift-eight'
-        )) return;
+	if (!interaction.isButton()) return;
 
-        await interaction.deferReply({ ephemeral: true });
+	const shiftConfig = SHIFT_MAP.find(({ id }) => id === interaction.customId);
+	if (!shiftConfig) return;
 
-        const guildId = interaction.guildId;
-        const guild = await client.guilds.fetch(guildId);
-        const channel = await client.channels.fetch(config.servers[guildId].amdShiftsChannelId);
-        const messageId = interaction.message.id;
-        const message = await channel.messages.fetch(messageId);
-        const userId = interaction.user.id;
-        const userIdMention = await client.users.fetch(userId);
-        const member = await guild.members.fetch(userId);
+	try {
+		await interaction.deferReply({ ephemeral: true }).catch(() => {});
 
-        const components = message.components.map(row => {
-            const actionRow = ActionRowBuilder.from(row);
-            actionRow.components.forEach(button => button.setDisabled(true));
-            return actionRow;
-        });
-        message.edit({ components: components });
+		const guildId = interaction.guildId;
+		const serverConfig = config.servers[guildId];
+		if (!serverConfig) return;
 
-        const query = {
-            guildId: guildId,
-            messageId: messageId,
-        };
+		const guild = interaction.guild || (await client.guilds.fetch(guildId));
+		const message = interaction.message;
+		const messageId = message.id;
 
-        let amdShiftsList = await amdShifts.findOne(query);
+		const userId = interaction.user.id;
+		const userMentionText = `<@${userId}>`;
+		const member = interaction.member || (await guild.members.fetch(userId));
 
-        const formattedDate = amdShiftsList.date;
+		const query = { guildId, messageId };
+		const shiftsRecord = await amdShifts.findOne(query);
+		if (!shiftsRecord) {
+			await replyAndAutoDelete(
+				interaction,
+				'Критическая ошибка в сменах! Расписание смены не найдено. Обновите сообщение и попробуйте снова.'
+			);
+			return;
+		}
 
-        let currentMember;
-        let currentMemberMention = '';
-        let canDelete;
-        let shiftNumber;
-        let deleted = false;
-        let badRequest = false;
+		const formattedDate = shiftsRecord.date;
+		const headRoleId = serverConfig.headAMDRoleId;
 
-        const headAMDRoleId = config.servers[guildId].headAMDRoleId;
-        const AMDRoleId = config.servers[guildId].AMDRoleId;
-        const partWorkAMDRoleId = config.servers[guildId].partWorkAMDRoleId;
+		const nowMs = Date.now();
+		const sentAtMs = shiftsRecord.sentAt || message.createdTimestamp || nowMs;
+		const rotationIndex = typeof shiftsRecord.rotationIndex === 'number' ? shiftsRecord.rotationIndex : 0;
 
-        if (member.roles.cache.has(headAMDRoleId)) canDelete = true;
-        else canDelete = false;
+		const plan = buildAccessPlan(serverConfig, rotationIndex);
+		const access = buildAccessSection({ plan, sentAtMs, nowMs });
 
-        switch (interaction.customId) {
-            case 'shift-one':
-                shiftNumber = 1;
-                currentMember = amdShiftsList.firstHour;
-                if (currentMember === 'Свободно') {
-                    await amdShifts.updateOne(query, { firstHour: userId });
-                    break;
-                }
-                currentMemberMention = await client.users.fetch(currentMember);
-                if (currentMember === userId || canDelete) {
-                    await amdShifts.updateOne(query, { firstHour: 'Свободно' });
-                    deleted = true;
-                    break;
-                }
-                badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
-                enableButtons(message);
-                return;
-            case 'shift-two':
-                shiftNumber = 2;
-                currentMember = amdShiftsList.secondHour;
-                if (currentMember === 'Свободно') {
-                    await amdShifts.updateOne(query, { secondHour: userId });
-                    break;
-                }
-                currentMemberMention = await client.users.fetch(currentMember);
-                if (currentMember === userId || canDelete) {
-                    await amdShifts.updateOne(query, { secondHour: 'Свободно' });
-                    deleted = true;
-                    break;
-                }
-                badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
-                enableButtons(message);
-                return;
-            case 'shift-three':
-                shiftNumber = 3;
-                currentMember = amdShiftsList.thirdHour;
-                if (currentMember === 'Свободно') {
-                    await amdShifts.updateOne(query, { thirdHour: userId });
-                    break;
-                }
-                currentMemberMention = await client.users.fetch(currentMember);
-                if (currentMember === userId || canDelete) {
-                    await amdShifts.updateOne(query, { thirdHour: 'Свободно' });
-                    deleted = true;
-                    break;
-                }
-                badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
-                enableButtons(message);
-                return;
-            case 'shift-four':
-                shiftNumber = 4;
-                currentMember = amdShiftsList.fourthHour;
-                if (currentMember === 'Свободно') {
-                    await amdShifts.updateOne(query, { fourthHour: userId });
-                    break;
-                }
-                currentMemberMention = await client.users.fetch(currentMember);
-                if (currentMember === userId || canDelete) {
-                    await amdShifts.updateOne(query, { fourthHour: 'Свободно' });
-                    deleted = true;
-                    break;
-                }
-                badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
-                enableButtons(message);
-                return;
-            case 'shift-five':
-                shiftNumber = 5;
-                currentMember = amdShiftsList.fifthHour;
-                if (currentMember === 'Свободно') {
-                    await amdShifts.updateOne(query, { fifthHour: userId });
-                    break;
-                }
-                currentMemberMention = await client.users.fetch(currentMember);
-                if (currentMember === userId || canDelete) {
-                    await amdShifts.updateOne(query, { fifthHour: 'Свободно' });
-                    deleted = true;
-                    break;
-                }
-                badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
-                enableButtons(message);
-                return;
-            case 'shift-six':
-                shiftNumber = 6;
-                currentMember = amdShiftsList.sixthHour;
-                if (currentMember === 'Свободно') {
-                    await amdShifts.updateOne(query, { sixthHour: userId });
-                    break;
-                }
-                currentMemberMention = await client.users.fetch(currentMember);
-                if (currentMember === userId || canDelete) {
-                    await amdShifts.updateOne(query, { sixthHour: 'Свободно' });
-                    deleted = true;
-                    break;
-                }
-                badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
-                enableButtons(message);
-                return;
-            case 'shift-seven':
-                shiftNumber = 7;
-                currentMember = amdShiftsList.seventhHour;
-                if (currentMember === 'Свободно') {
-                    await amdShifts.updateOne(query, { seventhHour: userId });
-                    break;
-                }
-                currentMemberMention = await client.users.fetch(currentMember);
-                if (currentMember === userId || canDelete) {
-                    await amdShifts.updateOne(query, { seventhHour: 'Свободно' });
-                    deleted = true;
-                    break;
-                }
-                badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
-                enableButtons(message);
-                return;
-            case 'shift-eight':
-                shiftNumber = 8;
-                currentMember = amdShiftsList.eighthHour;
-                if (currentMember === 'Свободно') {
-                    await amdShifts.updateOne(query, { eighthHour: userId });
-                    break;
-                }
-                currentMemberMention = await client.users.fetch(currentMember);
-                if (currentMember === userId || canDelete) {
-                    await amdShifts.updateOne(query, { eighthHour: 'Свободно' });
-                    deleted = true;
-                    break;
-                }
-                badRequest = true;
-                editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
-                enableButtons(message);
-                return;
-        }
-        amdShiftsList = await amdShifts.findOne(query);
+		let currentMember = shiftsRecord[shiftConfig.field] || FREE_SHIFT_VALUE;
+		let deleted = false;
+		let badRequest = false;
 
-        let firstHour = amdShiftsList.firstHour;
-        if (!(firstHour === 'Свободно')) firstHour = await client.users.fetch(firstHour);
-        let secondHour = amdShiftsList.secondHour;
-        if (!(secondHour === 'Свободно')) secondHour = await client.users.fetch(secondHour);
-        let thirdHour = amdShiftsList.thirdHour;
-        if (!(thirdHour === 'Свободно')) thirdHour = await client.users.fetch(thirdHour);
-        let fourthHour = amdShiftsList.fourthHour;
-        if (!(fourthHour === 'Свободно')) fourthHour = await client.users.fetch(fourthHour);
-        let fifthHour = amdShiftsList.fifthHour;
-        if (!(fifthHour === 'Свободно')) fifthHour = await client.users.fetch(fifthHour);
-        let sixthHour = amdShiftsList.sixthHour;
-        if (!(sixthHour === 'Свободно')) sixthHour = await client.users.fetch(sixthHour);
-        let seventhHour = amdShiftsList.seventhHour;
-        if (!(seventhHour === 'Свободно')) seventhHour = await client.users.fetch(seventhHour);
-        let eighthHour = amdShiftsList.eighthHour;
-        if (!(eighthHour === 'Свободно')) eighthHour = await client.users.fetch(eighthHour);
+		// Если смена свободна — пробуем занять
+		if (currentMember === FREE_SHIFT_VALUE) {
+			const category = getMemberCategory(member, serverConfig);
+			const allowed = Boolean(category) && (access.currentCategories || []).includes(category);
+			if (!allowed) {
+				const nextInfo = access.nextEtaMinutes !== null
+					? ` Следующее расширение через ~${access.nextEtaMinutes} мин.`
+					: '';
 
-        let pingRoles;
-        if (partWorkAMDRoleId) pingRoles = `<@&${partWorkAMDRoleId}>
-<@&${AMDRoleId}>`;
-        else pingRoles = `<@&${AMDRoleId}>`;
+				await replyAndAutoDelete(
+					interaction,
+					`Сейчас доступ к выбору смен открыт только для: ${formatRoleMentions(access.currentRoleIds)}.${nextInfo}`
+				);
+				return;
+			}
 
-        const content = `:white_check_mark: Смены на ${formattedDate}:
+			const alreadyTaken = countUserShifts(shiftsRecord, userId);
+			if (alreadyTaken >= 2) {
+				await replyAndAutoDelete(
+					interaction,
+					'Ты уже занял максимальное количество смен на сегодня (2). Сначала освободи одну из смен, чтобы занять новую.'
+				);
+				return;
+			}
 
-:one: 14:00 - 14:55: ${firstHour}
-:two: 15:00 - 15:55: ${secondHour}
-:three: 16:00 - 16:55: ${thirdHour}
-:four: 17:00 - 17:55: ${fourthHour}
-:five: 18:00 - 18:55: ${fifthHour}
-:six: 19:00 - 19:55: ${sixthHour}
-:seven: 20:00 - 20:55: ${seventhHour}
-:eight: 21:00 - 22:00: ${eighthHour}
+			// Занимать можно только если смена всё ещё свободна
+			const takeQuery = { ...query, [shiftConfig.field]: FREE_SHIFT_VALUE };
+			const takeRes = await amdShifts.updateOne(takeQuery, { [shiftConfig.field]: userId });
 
-**Нажмите на кнопку, соответствующую времени смены, чтобы занять текущее время в холле и для отправления объявлений.**
-Пользователи с ролью <@&${headAMDRoleId}> также могут нажать на кнопку, чтобы убрать сотрудника из списка.
-В очень редких случаях кнопки могут оставаться неактивными после того, как вы на них нажали.
-Это визуальный баг, используйте Ctrl+R, чтобы перезапустить Discord и кнопки вновь будут активными.
-${pingRoles}
--# WN Helper by Michael Lindberg. Discord: milkgames`;
+			if (!takeRes || takeRes.matchedCount === 0) {
+				// Кто-то занял раньше нас — никого не перезаписали
+				const fresh = await amdShifts.findOne(query);
+				if (fresh) currentMember = fresh[shiftConfig.field] || currentMember;
 
-        const updatedComponents = message.components.map(row => {
-            const actionRow = ActionRowBuilder.from(row);
-            actionRow.components.forEach(button => button.setDisabled(false));
-            return actionRow;
-        });
+				badRequest = true;
+				const text = buildOutcomeText({
+					shiftNumber: shiftConfig.number,
+					currentMember,
+					userId,
+					userMentionText,
+					headRoleId,
+					deleted,
+					badRequest,
+				});
+				await replyAndAutoDelete(interaction, text);
+				return;
+			}
 
-        await message.edit({ content: content });
+			// Обновляем локальную копию, чтобы не делать второй findOne
+			shiftsRecord[shiftConfig.field] = userId;
+		} else {
+			// Если смена занята — можно снять себя, либо старший AMD может снять любого
+			const canForceDelete = Boolean(headRoleId) && member.roles.cache.has(headRoleId);
 
-        threadEdit(message, shiftNumber, formattedDate, currentMember, currentMemberMention, userId, userIdMention, deleted);
-        editReply(interaction, shiftNumber, currentMember, currentMemberMention, userId, userIdMention, headAMDRoleId, deleted, badRequest);
-        enableButtons(message);
-        return;
-    } catch (error) {
-        console.log(`Произошла ошибка при нажатии на кнопку, связанную с изменением смен: ${error}`);
-        if (!interaction.replied){
-            await interaction.editReply({
-                content: `Произошла ошибка при нажатии на кнопку, связанную с изменениям смен: ${error}`,
-                ephemeral: true,
-            });
-        }
-        try {
-            const updatedComponents = message.components.map(row => {
-                const actionRow = ActionRowBuilder.from(row);
-                actionRow.components.forEach(button => button.setDisabled(false));
-                return actionRow;
-            });
-            enableButtons(message);
-        } catch (error) {
-            console.log(`Произошла ошибка при включении кнопок: ${error}`);
-        }
-    }
-}
+			if (currentMember === userId || canForceDelete) {
+				// Освобождать можно только если значение не поменялось
+				const expected = canForceDelete ? currentMember : userId;
+				const delQuery = { ...query, [shiftConfig.field]: expected };
+				const delRes = await amdShifts.updateOne(delQuery, { [shiftConfig.field]: FREE_SHIFT_VALUE });
+
+				if (!delRes || delRes.matchedCount === 0) {
+					const fresh = await amdShifts.findOne(query);
+					if (fresh) currentMember = fresh[shiftConfig.field] || currentMember;
+
+					badRequest = true;
+					const text = buildOutcomeText({
+						shiftNumber: shiftConfig.number,
+						currentMember,
+						userId,
+						userMentionText,
+						headRoleId,
+						deleted,
+						badRequest,
+					});
+					await replyAndAutoDelete(interaction, text);
+					return;
+				}
+
+				shiftsRecord[shiftConfig.field] = FREE_SHIFT_VALUE;
+				deleted = true;
+			} else {
+				badRequest = true;
+				const text = buildOutcomeText({
+					shiftNumber: shiftConfig.number,
+					currentMember,
+					userId,
+					userMentionText,
+					headRoleId,
+					deleted,
+					badRequest,
+				});
+				await replyAndAutoDelete(interaction, text);
+				return;
+			}
+		}
+
+		// Пересобираем расписание из обновлённой локальной копии (без повторного findOne)
+		const shiftLines = await buildShiftLines(client, shiftsRecord);
+		const content = buildScheduleMessageContent({
+			formattedDate,
+			shiftLines,
+			serverConfig,
+			rotationIndex,
+			sentAtMs,
+			nowMs,
+		});
+
+		await message.edit({ content });
+
+		await threadEdit(
+			message,
+			shiftConfig.number,
+			formattedDate,
+			currentMember,
+			userId,
+			userMentionText,
+			deleted
+		);
+
+		const text = buildOutcomeText({
+			shiftNumber: shiftConfig.number,
+			currentMember,
+			userId,
+			userMentionText,
+			headRoleId,
+			deleted,
+			badRequest,
+		});
+
+		await replyAndAutoDelete(interaction, text);
+	} catch (error) {
+		logger.info(`AMD смены: ошибка в обработчике changeShift: ${error}`);
+		await safeReply(interaction, { content: `Ошибка при обработке смены: ${error}`, ephemeral: true }).catch(() => {});
+	}
+};

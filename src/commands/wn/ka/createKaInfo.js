@@ -18,6 +18,8 @@
 const config = require('../../../../config.json');
 const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
+const logger = require('../../../utils/logger');
+
 module.exports = {
     name: 'createkainfo',
     description: 'Добавляет сообщение с выдачей ролей для Trainee Department в выбранном канале.',
@@ -178,7 +180,7 @@ module.exports = {
             });
             return;
         } catch (error) {
-            console.log(`Произошла ошибка при создании сообщения с информацией о кадровом аудите: ${error}`);
+            logger.info(`Произошла ошибка при создании сообщения с информацией о кадровом аудите: ${error}`);
             if (!interaction.replied) {
                 await interaction.editReply({
                     content: `Произошла ошибка при создании сообщения с информацией о кадровом аудите: ${error}`,

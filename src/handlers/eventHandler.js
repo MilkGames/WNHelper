@@ -16,21 +16,28 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 const path = require('path');
-const getAllFiles = require("../utils/getAllFiles");
+const getAllFiles = require('../utils/getAllFiles');
+const logger = require('../utils/logger');
 
 module.exports = async (client) => {
     const eventFolders = getAllFiles(path.join(__dirname, '..', 'events'), true);
-    
+
     for (const eventFolder of eventFolders) {
         const eventFiles = getAllFiles(eventFolder);
-        eventFiles.sort((a, b) => a > b);
+        eventFiles.sort((a, b) => a.localeCompare(b));
 
         const eventName = eventFolder.replace(/\\/g, '/').split('/').pop();
-        
-        client.on(eventName, async (arg) => {
-            for (const eventFile of eventFiles){
-                const eventFunction = require(eventFile);
-                await eventFunction(client, arg);
+
+        logger.info('Подключаю обработчики событий', { event: eventName, handlers: eventFiles.length });
+
+        client.on(eventName, async (...args) => {
+            for (const eventFile of eventFiles) {
+                try {
+                    const eventFunction = require(eventFile);
+                    await eventFunction(client, ...args);
+                } catch (error) {
+                    logger.error('Обработчик события крашнулся', { event: eventName, file: eventFile }, error);
+                }
             }
         });
     }

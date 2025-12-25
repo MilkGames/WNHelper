@@ -17,20 +17,23 @@
 */
 const { ActivityType } = require('discord.js');
 
+const logger = require('../../utils/logger');
+
 module.exports = async (client) => {
-    console.log(`Бот ${client.user.username} онлайн!`);
+    logger.info(`Бот ${client.user.username} онлайн!`);
     
     let techMaintenance = false;
+    let testing = false;
 
     let status = [
-        {
-            name: 'нервы ген. директора',
-        },
+        // {
+        //     name: 'нервы ген. директора',
+        // },
         {
             name: 'Majestic RP',
         },
         {
-            name: 'Версия 1.2',
+            name: 'Версия 1.2.2',
             type: ActivityType.Custom,
         },
         {
@@ -49,16 +52,56 @@ module.exports = async (client) => {
             name: 'Value "52" is not a valid enum value.',
             type: ActivityType.Custom,
         },
+        // {
+        //     name: 'новый ролик у Logan Fletcher',
+        //     type: ActivityType.Streaming,
+        //     url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        // },
+        // {
+        //     name: 'функционал Weazel News',
+        //     type: ActivityType.Streaming,
+        //     url: 'https://www.youtube.com/watch?v=rnGQoE93KZ8',
+        // },
+        // {
+        //     name: 'на Security Bot',
+        //     type: ActivityType.Watching,
+        // },
         {
-            name: 'новый ролик у Logan Fletcher',
-            type: ActivityType.Streaming,
-            url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            name: 'Legally Unbanned ✅',
+            type: ActivityType.Custom,
+        },
+        // {
+        //     name: 'кто не сдал отчёт 👀',
+        //     type: ActivityType.Watching,
+        // },
+        // {
+        //     name: 'на твои ошибки в ПРО',
+        //     type: ActivityType.Watching,
+        // },
+        // {
+        //     name: 'Stack Overflow',
+        //     type: ActivityType.Watching,
+        // },
+        {
+            name: 'Ping: 9999ms',
+            type: ActivityType.Custom,
         },
         {
-            name: 'функционал Weazel News',
-            type: ActivityType.Streaming,
-            url: 'https://www.youtube.com/watch?v=rnGQoE93KZ8',
+            name: 'Memory Leak: 128GB',
+            type: ActivityType.Custom,
         },
+        {
+            name: 'npm install life',
+            type: ActivityType.Custom,
+        },
+        // {
+        //     name: 'гимн Weazel News',
+        //     type: ActivityType.Listening,
+        // },
+        {
+            name: 'Что? 9 рангов???',
+            type: ActivityType.Custom,
+        }
     ];
 
     let techStatus = [
@@ -82,13 +125,37 @@ module.exports = async (client) => {
             name: 'Ожидайте... 🔧',
             type: ActivityType.Custom,
         },
+        {
+            name: 'Вспоминаю, как это работало... 🔧',
+            type: ActivityType.Custom,
+        },
+        {
+            name: 'Фикшу баги годичной давности 🔧',
+            type: ActivityType.Custom,
+        },
+        {
+            name: 'Compiling... 🔧',
+            type: ActivityType.Custom,
+        }
+    ];
+
+    let testingStatus = [
+        {
+            name: 'Я недоступен! Идёт тест...',
+            type: ActivityType.Custom,
+        }
     ];
 
     setInterval(() => {
         let random;
         if (techMaintenance) {
-            random = Math.floor(Math.random() * techStatus.length);
-            client.user.setActivity(techStatus[random]);
+            if (testing) {
+                random = Math.floor(Math.random() * testingStatus.length);
+                client.user.setActivity(testingStatus[random]);
+            } else {
+                random = Math.floor(Math.random() * techStatus.length);
+                client.user.setActivity(techStatus[random]);
+            }
         } else {
             random = Math.floor(Math.random() * status.length);
             client.user.setActivity(status[random]);
@@ -97,5 +164,5 @@ module.exports = async (client) => {
 
     // const channel = await client.channels.fetch("1249711900292546681");
     // const message = await channel.messages.fetch("1332387885843873864");
-    // console.log(message.embeds[0].data.fields[message.embeds[0].data.fields.length - 1].value);
+    // logger.info(message.embeds[0].data.fields[message.embeds[0].data.fields.length - 1].value);
 };
