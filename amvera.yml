@@ -1,6 +1,5 @@
 ---
 name: WN Helper
-tariffId: "4"
 version: null
 meta:
   environment: node

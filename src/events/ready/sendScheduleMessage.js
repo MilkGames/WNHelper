@@ -163,6 +163,7 @@ async function scheduleAccessNotifications({
 
 module.exports = async (client) => {
     for (const guildId of Object.keys(config.servers)) {
+        if (guildId !== "1249711898744848415") continue;
         const serverName = client.guilds.cache.get(guildId)?.name || guildId;
         const serverConfig = config.servers[guildId];
 

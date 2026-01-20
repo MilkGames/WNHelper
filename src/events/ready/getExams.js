@@ -20,6 +20,15 @@ const config = require('../../../config.json');
 const express = require('express');
 
 const logger = require('../../utils/logger');
+const {
+    enqueueExamJob,
+    resetStuckJobs,
+    getNextDueJob,
+    markProcessing,
+    markDone,
+    markFailed,
+} = require('../../utils/examQueue');
+const { resolveExamMember } = require('../../utils/resolveExamMember');
 
 function getClientIp(req) {
     const xf = req.headers['x-forwarded-for'];
@@ -50,6 +59,19 @@ function makeRateLimiter({ limit = 20, windowMs = 60_000 } = {}) {
         b.count += 1;
         return next();
     };
+}
+
+function resolveExamGuildId() {
+    const env = (process.env.EXAM_GUILD_ID || '').trim();
+    if (env && config?.servers?.[env]) return env;
+
+    const fallback = String(config?.testServer || '').trim();
+    if (fallback && config?.servers?.[fallback]) return fallback;
+
+    const keys = Object.keys(config?.servers || {});
+    if (keys.length) return keys[0];
+
+    throw new Error('config.json: список серверов пустой, нельзя определить guildId для экзаменов');
 }
 
 function normalizeTestConfig({ testId, testName }) {
@@ -122,19 +144,146 @@ function extractCorrectAnswers(results) {
     return Number.isFinite(n) ? n : null;
 }
 
+function buildCandidatesText(candidates) {
+    if (!Array.isArray(candidates) || candidates.length === 0) return '';
+    return candidates
+        .slice(0, 5)
+        .map((m) => `${m} (${m.displayName})`)
+        .join('\n');
+}
+
+async function processExamJob(client, job, guildId) {
+    const data = job?.payload || {};
+
+    const testId = typeof data.testId === 'string' ? data.testId : null;
+    const rawTestName = typeof data.testName === 'string' ? data.testName : '—';
+    const testUrl = typeof data.url === 'string' ? data.url : '—';
+
+    const cfg = normalizeTestConfig({ testId, testName: rawTestName });
+    const testName = cfg.shortName;
+    const quickLink = cfg.quickLink;
+
+    const testMemberInput = extractRegValue(data.regparams) || '—';
+    const correctAnswers = extractCorrectAnswers(data.results);
+
+    const guild = await client.guilds.fetch(guildId);
+
+    // Ищем участника без массового fetch (opcode 8)
+    const resolved = await resolveExamMember(guild, testMemberInput);
+    const foundMember = resolved?.member || null;
+    const candidates = Array.isArray(resolved?.candidates) ? resolved.candidates : [];
+
+    let foundMemberText = foundMember
+        ? `${foundMember} (${foundMember.displayName})`
+        : 'Пользователь не найден.';
+
+    if (!foundMember && candidates.length) {
+        const ct = buildCandidatesText(candidates);
+        foundMemberText = ct
+            ? `Не удалось однозначно определить пользователя.
+Кандидаты:
+${ct}`
+            : 'Не удалось однозначно определить пользователя.';
+    }
+
+    let title = 'Новая сдача экзамена! - НА РАССМОТРЕНИИ';
+    let color = 0x3498DB;
+
+    if (!foundMember && candidates.length) {
+        title = 'Новая сдача экзамена! - НУЖЕН ВЫБОР';
+        color = 0xF1C40F;
+    } else if (!foundMember) {
+        title = 'Новая сдача экзамена! - БРАК';
+        color = 0xFF0000;
+    }
+
+    const examEmbed = new EmbedBuilder()
+        .setColor(color)
+        .setTitle(title)
+        .addFields(
+            { name: 'Название экзамена:', value: `${testName}` },
+            { name: 'Ссылка на результат:', value: `${testUrl}` },
+            { name: 'Пользователь ввёл:', value: `${testMemberInput}` },
+            { name: 'Результат поиска пользователя:', value: `${foundMemberText}` },
+        )
+        .setTimestamp()
+        .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+
+    // Результат
+    if (cfg.manual || testName === 'ПРО (письменный)') {
+        examEmbed.addFields({ name: 'Экзамен необходимо проверить.', value: ' ' });
+    } else {
+        // Даже если не смогли вытащить число — всё равно отправляем на рассмотрение
+        if (!Number.isFinite(correctAnswers)) {
+            examEmbed.addFields({ name: 'Экзамен необходимо проверить.', value: 'Не удалось определить результат (формат данных).' });
+        } else {
+            const maxScore = cfg.maxScore;
+            const passScore = cfg.passScore;
+
+            const passed = correctAnswers >= passScore;
+            const mark = passed ? 'СДАНО ✅' : 'НЕ СДАНО ❌';
+
+            examEmbed.addFields({
+                name: 'Результат экзамена:',
+                value: `${correctAnswers} / ${maxScore} - ${mark}`,
+            });
+        }
+    }
+
+    examEmbed.addFields({ name: 'Ссылка на быструю проверку экзамена:', value: `${quickLink}` });
+
+    const examinerRoleId = config.servers[guildId].examinerRoleId;
+    const examChannelId = config.servers[guildId].examChannelId;
+    const examChannel = await client.channels.fetch(examChannelId);
+
+    const needChooseCandidate = !foundMember && candidates.length;
+
+    const buttons = [
+        new ButtonBuilder().setCustomId('exam-confirm').setLabel('Сдано').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('exam-decline').setLabel('Не сдано').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('exam-spam').setLabel('Брак').setStyle(ButtonStyle.Danger),
+    ];
+
+    if (needChooseCandidate) {
+        buttons.push(
+            new ButtonBuilder()
+                .setCustomId('exam-choose-candidate')
+                .setLabel('Выбрать кандидата')
+                .setStyle(ButtonStyle.Primary),
+        );
+    }
+
+    const row = new ActionRowBuilder().addComponents(...buttons);
+
+    const sent = await examChannel.send({
+        content: `<@&${examinerRoleId}>`,
+        embeds: [examEmbed],
+        components: [row],
+    });
+
+    const messageLink = `https://discord.com/channels/${guildId}/${sent.channelId}/${sent.id}`;
+    return {
+        sentChannelId: sent.channelId,
+        sentMessageId: sent.id,
+        messageLink,
+        foundMemberId: foundMember ? foundMember.id : null,
+    };
+}
+
 module.exports = async (client) => {
     const app = express();
     const PORT = Number(process.env.PORT) || 80;
 
     const WEBHOOK_KEY = process.env.WEBHOOK_KEY;
     const TEST_KEY = process.env.TEST_KEY;
-    if (!WEBHOOK_KEY) {
-        // Это защита от дурака (от меня)
-        throw new Error('WEBHOOK_KEY is not set in environment');
-    }
-    if (!TEST_KEY) {
-        // Это защита от дурака (от меня)
-        throw new Error('TEST_KEY is not set in environment');
+
+    // Защита от дурака (от меня)
+    if (!WEBHOOK_KEY) throw new Error('WEBHOOK_KEY is not set in environment');
+    if (!TEST_KEY) throw new Error('TEST_KEY is not set in environment');
+
+    const guildId = resolveExamGuildId();
+    if (!config?.servers?.[guildId]) {
+        throw new Error(`config.json: no server config for guildId=${guildId}`);
     }
 
     // На всякий, никогда не знаешь когда понадобится
@@ -145,121 +294,93 @@ module.exports = async (client) => {
 
     // Отправляем ключ на onlinetestpad
     app.get('/webhook', (req, res) => {
-        res.status(200).send(TEST_KEY); // Да, он показывается даже на /webhook, но это не огромная проблема
+        res.status(200).send(TEST_KEY);
     });
 
+    // Кладём задачу в очередь и отвечаем 200
     app.post('/webhook', async (req, res) => {
         try {
-            // Защита по query key
             if (req.query.key !== WEBHOOK_KEY) return res.status(403).send('Forbidden');
 
-            const data = req.body || {};
-            const testId = typeof data.testId === 'string' ? data.testId : null;
-            const rawTestName = typeof data.testName === 'string' ? data.testName : '—';
-            const testUrl = typeof data.url === 'string' ? data.url : '—';
+            const payload = req.body || {};
+            const ip = getClientIp(req);
 
-            const cfg = normalizeTestConfig({ testId, testName: rawTestName });
-            const testName = cfg.shortName;
-            const quickLink = cfg.quickLink;
-
-            const testMemberInput = extractRegValue(data.regparams) || '—';
-            const correctAnswers = extractCorrectAnswers(data.results);
-
-            // Discord guild (как-нибудь надо исправить это) TODO!
-            const guildId = Object.keys(config.servers)[1];
-            const guild = await client.guilds.fetch(guildId);
-
-            // Ищем участника
-            const members = await guild.members.fetch();
-
-            const staticMatch = (typeof testMemberInput === 'string')
-                ? (testMemberInput.match(/\d+/)?.[0] || null)
-                : null;
-
-            let foundMember = null;
-            if (staticMatch) {
-                foundMember = members.find(m => (m.displayName || '').includes(staticMatch)) || null;
-            }
-            if (!foundMember && typeof testMemberInput === 'string' && testMemberInput !== '—') {
-                foundMember = members.find(m => (m.displayName || '').includes(testMemberInput)) || null;
+            const { job, deduped } = await enqueueExamJob({ guildId, ip, payload });
+            if (deduped) {
+                logger.info(`Экзамен: дубликат вебхука, jobId=${job.jobId}`);
+                return res.status(200).send('Принято');
             }
 
-            const foundMemberText = foundMember
-                ? `${foundMember} (${foundMember.displayName})`
-                : 'Пользователь не найден.';
-
-            let title = 'Новая сдача экзамена! - НА РАССМОТРЕНИИ';
-            let color = 0x3498DB;
-
-            if (!foundMember) {
-                title = 'Новая сдача экзамена! - БРАК';
-                color = 0xFF0000;
-            }
-
-            const examEmbed = new EmbedBuilder()
-                .setColor(color)
-                .setTitle(title)
-                .addFields(
-                    { name: 'Название экзамена:', value: `${testName}` },
-                    { name: 'Ссылка на результат:', value: `${testUrl}` },
-                    { name: 'Пользователь ввёл:', value: `${testMemberInput}` },
-                    { name: 'Результат поиска пользователя:', value: `${foundMemberText}` },
-                )
-                .setTimestamp()
-                .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
-
-            // Результат
-            if (cfg.manual || testName === 'ПРО (письменный)') {
-                examEmbed.addFields({ name: 'Экзамен необходимо проверить.', value: ' ' });
-            } else {
-                // Даже если не смогли вытащить число — всё равно отправляем на рассмотрение
-                if (!Number.isFinite(correctAnswers)) {
-                    examEmbed.addFields({ name: 'Экзамен необходимо проверить.', value: 'Не удалось определить результат (формат данных).' });
-                } else {
-                    const maxScore = cfg.maxScore;
-                    const passScore = cfg.passScore;
-
-                    const passed = correctAnswers >= passScore;
-                    const mark = passed ? 'СДАНО ✅' : 'НЕ СДАНО ❌';
-
-                    examEmbed.addFields({
-                        name: 'Результат экзамена:',
-                        value: `${correctAnswers} / ${maxScore} - ${mark}`,
-                    });
-                }
-            }
-
-            examEmbed.addFields({ name: 'Ссылка на быструю проверку экзамена:', value: `${quickLink}` });
-
-            const examinerRoleId = config.servers[guildId].examinerRoleId;
-            const examChannelId = config.servers[guildId].examChannelId;
-            const examChannel = await client.channels.fetch(examChannelId);
-
-            // Кнопки только если пользователь найден
-            if (!foundMember) {
-                await examChannel.send({ embeds: [examEmbed] });
-            } else {
-                const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('exam-confirm').setLabel('Сдано').setStyle(ButtonStyle.Success),
-                    new ButtonBuilder().setCustomId('exam-decline').setLabel('Не сдано').setStyle(ButtonStyle.Danger),
-                    new ButtonBuilder().setCustomId('exam-spam').setLabel('Брак').setStyle(ButtonStyle.Danger),
-                );
-
-                await examChannel.send({
-                    content: `<@&${examinerRoleId}>`,
-                    embeds: [examEmbed],
-                    components: [row],
-                });
-            }
-
+            logger.info(`Экзамен: задача поставлена в очередь, jobId=${job.jobId}`);
             return res.status(200).send('Принято');
         } catch (error) {
-            logger.error(`Произошла ошибка при принятии результатов экзамена: ${error}`);
-            return res.status(400).send('Ошибка на стороне клиента');
+            logger.error(`Экзамен: ошибка при постановке в очередь: ${error}`);
+            return res.status(200).send('Принято');
         }
     });
 
+    // Воркер очереди
+    let workerBusy = false;
+
+    async function workerTick() {
+        if (workerBusy) return;
+        workerBusy = true;
+
+        let job = null;
+        try {
+            job = await getNextDueJob();
+            if (!job) return;
+
+            await markProcessing(job);
+
+            const meta = await processExamJob(client, job, guildId);
+            await markDone(job, meta);
+        } catch (error) {
+            if (!job) {
+                logger.error(`Экзамен: ошибка воркера (без job): ${error}`);
+                return;
+            }
+
+            const info = await markFailed(job, error);
+            if (info.dead) {
+                logger.error(
+                    `Экзамен: задача помечена как dead после ${info.attempts} попыток jobId=${job.jobId}: ${info.lastError}`
+                );
+
+                // Попробуем уведомить экзаменаторов, что конкретная сдача провалилась
+                try {
+                    const examinerRoleId = config.servers[guildId].examinerRoleId;
+                    const examChannelId = config.servers[guildId].examChannelId;
+                    const examChannel = await client.channels.fetch(examChannelId);
+
+                    const testUrl = typeof job?.payload?.url === 'string' ? job.payload.url : '—';
+                    await examChannel.send(
+                        `<@&${examinerRoleId}> Не удалось обработать сдачу экзамена после ${info.attempts} попыток. ` +
+                        `jobId=${job.jobId}. Ссылка на результат: ${testUrl}`
+                    );
+                } catch (notifyErr) {
+                    logger.error(`Экзамен: не удалось отправить уведомление о dead задаче: ${notifyErr}`);
+                }
+            } else {
+                logger.warn(
+                    `Экзамен: ошибка обработки jobId=${job.jobId} (attempt=${info.attempts}), retry через ${Math.ceil(info.delayMs / 1000)}s: ${info.lastError}`
+                );
+            }
+        } finally {
+            workerBusy = false;
+        }
+    }
+
+    // Инициализация воркера
+    try {
+        await resetStuckJobs({ maxProcessingMs: 10 * 60_000 });
+    } catch (error) {
+        logger.error(`Экзамен: не удалось восстановить зависшие задачи очереди: ${error}`);
+    }
+
+    setInterval(workerTick, 1500);
+
     app.listen(PORT, () => {
-        logger.info(`Сервер запущен на порту: ${PORT}`);
+        logger.info(`Сервер экзаменов запущен на порту: ${PORT}. guildId=${guildId}`);
     });
 };

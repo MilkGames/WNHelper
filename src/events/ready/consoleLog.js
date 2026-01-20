@@ -33,7 +33,7 @@ module.exports = async (client) => {
             name: 'Majestic RP',
         },
         {
-            name: 'Версия 1.2.2',
+            name: 'Версия 1.2.3',
             type: ActivityType.Custom,
         },
         {

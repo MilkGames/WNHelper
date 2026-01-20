@@ -37,6 +37,53 @@ function extractDiscordId(text) {
 	return m ? m[1] : null;
 }
 
+async function resolveMemberFromInviteField(guild, raw) {
+	const trimmed = String(raw || '').trim();
+	if (!trimmed) return { member: null };
+
+	// Ищем сначала по Discord ID
+	const id = extractDiscordId(trimmed);
+	if (id) {
+		const m = await guild.members.fetch(id).catch(() => null);
+		return { member: m };
+	}
+
+	// Потом по @username / username / username#0000
+	let q = trimmed.replace(/^@/, '').trim();
+	if (!q) return { member: null };
+
+	// На всякий случай отрежем дискриминатор, если кто-то ввёл старый формат
+	if (q.includes('#')) q = q.split('#')[0].trim();
+	if (!q) return { member: null };
+
+	const qLower = q.toLowerCase();
+
+	// Если есть кеш, ищем через него
+	let cached =
+		guild.members.cache.find((m) => m.user?.username?.toLowerCase() === qLower) ||
+		guild.members.cache.find((m) => (m.displayName || '').toLowerCase() === qLower);
+
+	if (cached) return { member: cached };
+
+	// Теперь уже ищем через API
+	const fetched = await guild.members.fetch({ query: q, limit: 10 }).catch(() => null);
+	if (!fetched || fetched.size === 0) return { member: null };
+
+	const exact =
+		fetched.find((m) => m.user?.username?.toLowerCase() === qLower) ||
+		fetched.find((m) => (m.displayName || '').toLowerCase() === qLower);
+
+	if (exact) return { member: exact };
+
+	if (fetched.size === 1) return { member: fetched.first() };
+
+	return {
+		member: null,
+		ambiguous: true,
+		candidates: fetched.map((m) => `@${m.user.username}`).slice(0, 5),
+	};
+}
+
 async function replyTemp(interaction, content) {
 	await interaction.editReply({ content, ephemeral: true });
 
@@ -141,24 +188,31 @@ module.exports = async (client, interaction) => {
 				return;
 			}
 
-			const inviteUserId = extractDiscordId(inviteRaw);
-			if (!inviteUserId) {
-				await replyTemp(
-					interaction,
-					'Не удалось определить сотрудника, который вас принимал.\nУкажите тег (@user) или Discord ID.\n-# Сообщение удалится через 30 секунд.'
-				);
-				return;
-			}
+            const guild = await client.guilds.fetch(guildId);
 
-			const guild = await client.guilds.fetch(guildId);
-			const inviteMember = await guild.members.fetch(inviteUserId).catch(() => null);
-			if (!inviteMember) {
-				await replyTemp(
-					interaction,
-					'Не удалось найти указанного сотрудника на сервере.\nПроверьте тег/ID.\n-# Сообщение удалится через 30 секунд.'
-				);
-				return;
-			}
+            const resolved = await resolveMemberFromInviteField(guild, inviteRaw);
+            if (!resolved.member) {
+                if (resolved.ambiguous) {
+                    await replyTemp(
+                        interaction,
+                        `Нашёл несколько пользователей по вашему вводу: ${resolved.candidates.join(', ')}.\n` +
+                        `Укажите тег (упоминание вида <@123...>), Discord ID или @username.\n` +
+                        `-# Сообщение удалится через 30 секунд.`
+                    );
+                    return;
+                }
+
+                await replyTemp(
+                    interaction,
+                    'Не удалось определить сотрудника, который вас принимал.\n' +
+                    'Укажите тег (упоминание вида <@123...>), Discord ID или @username.\n' +
+                    '-# Сообщение удалится через 30 секунд.'
+                );
+                return;
+            }
+			
+            const inviteMember = resolved.member;
+            const inviteUserId = inviteMember.id;
 
 			const userId = interaction.user.id;
 

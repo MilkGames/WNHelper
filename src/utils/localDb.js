@@ -7,8 +7,10 @@ const DATA_DIR = path.join(__dirname, '..', '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'localdb.json');
 const DEFAULT_DB = {
     amdShifts: [],
+    amdShiftRotation: [],
     giveRoles: [],
     blackListGiveRoles: [],
+    examQueue: [],
 };
 
 function ensureDatabase() {
@@ -25,7 +27,13 @@ function readDb() {
     ensureDatabase();
     try {
         const raw = fs.readFileSync(DB_PATH, 'utf8');
-        return raw ? JSON.parse(raw) : { ...DEFAULT_DB };
+        const parsed = raw ? JSON.parse(raw) : {};
+
+        for (const [k, v] of Object.entries(DEFAULT_DB)) {
+            if (!Array.isArray(parsed[k])) parsed[k] = Array.isArray(v) ? [] : v;
+        }
+
+        return parsed;
     } catch (error) {
         logger.error('Не удалось прочитать локальную базу данных, пересоздаю с настройками по умолчанию.', error);
         fs.writeFileSync(DB_PATH, JSON.stringify(DEFAULT_DB, null, 2));
@@ -52,6 +60,16 @@ function createModel(collectionName) {
             const collection = db[collectionName] || [];
             const record = collection.find((item) => matchesQuery(item, query));
             return record ? new LocalModel(record) : null;
+        }
+
+        static async find(query = {}) {
+            const db = readDb();
+            const collection = db[collectionName] || [];
+            const records = Object.keys(query).length
+                ? collection.filter((item) => matchesQuery(item, query))
+                : collection;
+
+            return records.map((r) => new LocalModel(r));
         }
 
         async save() {
@@ -95,4 +113,6 @@ function createModel(collectionName) {
 module.exports = {
     createModel,
     ensureDatabase,
+    readDb,
+    writeDb,
 };
