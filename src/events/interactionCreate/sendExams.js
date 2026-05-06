@@ -15,43 +15,44 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
-const { ModalBuilder, EmbedBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const { ModalBuilder, EmbedBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const config = require('../../../config.json');
 
+const {
+    deferReplyWithRetry,
+    deleteReplyWithRetry,
+    editMessageWithRetry,
+    editReplyWithRetry,
+    followUpWithRetry,
+    replyWithRetry,
+    sendMessageWithRetry,
+    showModalWithRetry,
+} = require('../../utils/discordRequest');
 const logger = require('../../utils/logger');
+const { extractDiscordId } = require('../../utils/resolveExamMember');
+const {
+    EXAM_TITLES,
+    EXAM_COLORS,
+    buildSelectionButtonsRow,
+    buildReviewButtonsRow,
+    upsertField,
+    getFieldValue,
+} = require('../../utils/examPresentation');
 
-function upsertField(embed, name, value, inline = false) {
-    const rawFields = Array.isArray(embed.data?.fields) ? embed.data.fields : [];
-
-    // Нормализуем поля в чистые { name, value, inline } чтобы setFields не падал на валидации
-    const fields = rawFields
-        .filter(Boolean)
-        .map((f) => ({
-            name: String(f.name ?? '').slice(0, 256) || '—',
-            value: String(f.value ?? '').slice(0, 1024) || '—',
-            inline: f.inline === true,
-        }));
-
-    const idx = fields.findIndex((f) => f.name === name);
-    const next = {
-        name: String(name).slice(0, 256) || '—',
-        value: String(value ?? '').slice(0, 1024) || '—',
-        inline: inline === true,
-    };
-
-    if (idx === -1) fields.push(next);
-    else fields[idx] = next;
-
-    // На всякий случай, если бот тронется головой: лимит Discord на поля — 25
-    if (fields.length > 25) {
-        // Сначала пытаемся выкинуть служебное поле письменного
-        const serviceIdx = fields.findIndex((f) => f.name === 'Экзамен необходимо проверить.');
-        if (serviceIdx !== -1) fields.splice(serviceIdx, 1);
-
-        while (fields.length > 25) fields.pop();
+async function sendTemporaryReply(interaction, content) {
+    if (interaction.deferred || interaction.replied) {
+        await editReplyWithRetry(interaction, { content });
+    } else {
+        await replyWithRetry(interaction, { content, ephemeral: true });
     }
 
-    embed.setFields(fields);
+    setTimeout(async () => {
+        try {
+            await deleteReplyWithRetry(interaction);
+        } catch (error) {
+            logger.info(`Не удалось удалить ответ: ${error}`);
+        }
+    }, 30_000);
 }
 
 async function editReply(type, interaction) {
@@ -74,66 +75,84 @@ async function editReply(type, interaction) {
             break;
     }
 
-    await interaction.editReply({ content });
+    await sendTemporaryReply(interaction, content);
+}
+
+async function getExaminerData(client, interaction) {
+    const guildId = interaction.guildId;
+    const guild = await client.guilds.fetch(guildId);
+    const examinerRoleId = config.servers[guildId].examinerRoleId;
+    const examiner = await guild.members.fetch(interaction.user.id);
+
+    return {
+        guild,
+        examiner,
+        examinerRoleId,
+        hasAccess: examiner.roles.cache.has(examinerRoleId),
+    };
+}
+
+
+function hasExaminerAccessFromInteraction(interaction) {
+    const examinerRoleId = config.servers[interaction.guildId]?.examinerRoleId;
+    if (!examinerRoleId) return false;
+
+    const roles = interaction.member?.roles;
+    if (roles?.cache && typeof roles.cache.has === 'function') {
+        return roles.cache.has(examinerRoleId);
+    }
+
+    if (Array.isArray(roles)) {
+        return roles.includes(examinerRoleId);
+    }
+
+    return false;
+}
+
+async function replyNoExaminerAccess(interaction) {
+    await replyWithRetry(interaction, {
+        content: `Вы не являетесь экзаменатором.
+-# Сообщение удалится через 30 секунд.`,
+        ephemeral: true,
+    });
 
     setTimeout(async () => {
         try {
-            await interaction.deleteReply();
+            await deleteReplyWithRetry(interaction);
         } catch (error) {
             logger.info(`Не удалось удалить ответ: ${error}`);
         }
     }, 30_000);
 }
 
-function buildExamButtonsRow({ includeChoose = false, chooseDisabled = false } = {}) {
-    const buttons = [
-        new ButtonBuilder().setCustomId('exam-confirm').setLabel('Сдано').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('exam-decline').setLabel('Не сдано').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId('exam-spam').setLabel('Брак').setStyle(ButtonStyle.Danger),
-    ];
-
-    if (includeChoose) {
-        buttons.push(
-            new ButtonBuilder()
-                .setCustomId('exam-choose-candidate')
-                .setLabel('Выбрать кандидата')
-                .setStyle(ButtonStyle.Primary)
-                .setDisabled(chooseDisabled === true),
-        );
-    }
-
-    return new ActionRowBuilder().addComponents(...buttons);
-}
-
-function parseCandidateItems(examineeInfo) {
-    const txt = String(examineeInfo || '');
+function parseCandidateItems(searchResultValue) {
+    const txt = String(searchResultValue || '');
     const lines = txt.split('\n').map((l) => l.trim()).filter(Boolean);
 
     let candidateLines = lines;
-    const idx = lines.findIndex((l) => l.toLowerCase().startsWith('кандидаты'));
+    const idx = lines.findIndex((line) => line.toLowerCase().startsWith('кандидаты'));
     if (idx !== -1) candidateLines = lines.slice(idx + 1);
 
     const items = [];
     const seen = new Set();
 
     for (const line of candidateLines) {
-        const m = line.match(/<@!?(\d{17,20})>/);
-        if (!m) continue;
+        const match = line.match(/<@!?(\d{17,20})>/);
+        if (!match) continue;
 
-        const id = m[1];
+        const id = match[1];
         if (seen.has(id)) continue;
         seen.add(id);
 
-        const dn = (line.match(/\(([^)]+)\)\s*$/) || [])[1] || id;
-        items.push({ id, displayName: dn });
+        const displayName = (line.match(/\(([^)]+)\)\s*$/) || [])[1] || id;
+        items.push({ id, displayName });
     }
 
-    // Если формат неожиданно поменяли, попробуем вытащить упоминания из всего текста
     if (items.length === 0) {
         const reId = /<@!?(\d{17,20})>/g;
-        let mm;
-        while ((mm = reId.exec(txt))) {
-            const id = mm[1];
+        let match;
+        while ((match = reId.exec(txt))) {
+            const id = match[1];
             if (seen.has(id)) continue;
             seen.add(id);
             items.push({ id, displayName: id });
@@ -144,28 +163,35 @@ function parseCandidateItems(examineeInfo) {
     return items;
 }
 
+async function moveExamToReview(message, chosenMember) {
+    const examEmbed = new EmbedBuilder(message.embeds[0]);
+    examEmbed.setTitle(EXAM_TITLES.review);
+    examEmbed.setColor(EXAM_COLORS.review);
+    upsertField(examEmbed, 'Результат поиска пользователя:', `${chosenMember} (${chosenMember.displayName})`, false);
+
+    await editMessageWithRetry(message, {
+        embeds: [examEmbed],
+        components: [buildReviewButtonsRow()],
+    });
+}
+
 module.exports = async (client, interaction) => {
-    const isExamButton =
-        interaction.isButton() && ['exam-confirm', 'exam-decline', 'exam-spam'].includes(interaction.customId);
+    const isExamAction = interaction.isButton() && ['exam-confirm', 'exam-decline', 'exam-spam'].includes(interaction.customId);
     const isChooseButton = interaction.isButton() && interaction.customId === 'exam-choose-candidate';
+    const isSetMemberIdButton = interaction.isButton() && interaction.customId === 'exam-set-member-id';
     const isCandidateSelect = interaction.isStringSelectMenu() && interaction.customId === 'exam-candidate-select';
 
-    if (!isExamButton && !isChooseButton && !isCandidateSelect) return;
+    if (!isExamAction && !isChooseButton && !isSetMemberIdButton && !isCandidateSelect) return;
 
     let modalInteraction;
     let usedModal = false;
 
     try {
         if (isChooseButton) {
-            await interaction.deferReply({ ephemeral: true });
+            await deferReplyWithRetry(interaction, { ephemeral: true });
 
-            const guildId = interaction.guildId;
-            const guild = await client.guilds.fetch(guildId);
-            const examinerRoleId = config.servers[guildId].examinerRoleId;
-
-            const examiner = await guild.members.fetch(interaction.user.id);
-
-            if (!examiner.roles.cache.has(examinerRoleId)) {
+            const { hasAccess } = await getExaminerData(client, interaction);
+            if (!hasAccess) {
                 await editReply(4, interaction);
                 return;
             }
@@ -173,32 +199,29 @@ module.exports = async (client, interaction) => {
             const message = interaction.message;
             const title = String(message.embeds?.[0]?.title || '');
             if (!title.includes('НУЖЕН ВЫБОР')) {
-                await interaction.editReply({ content: 'Выбор кандидата не требуется.' });
-                setTimeout(async () => { try { await interaction.deleteReply(); } catch (_) {} }, 30_000);
+                await sendTemporaryReply(interaction, 'Выбор кандидата больше не требуется.');
                 return;
             }
 
             const alreadyOpen = Array.isArray(message.components) && message.components.some((row) =>
-                Array.isArray(row.components) && row.components.some((c) => c.customId === 'exam-candidate-select')
+                Array.isArray(row.components) && row.components.some((component) => component.customId === 'exam-candidate-select')
             );
             if (alreadyOpen) {
-                await interaction.editReply({ content: 'Меню выбора кандидата уже открыто.' });
-                setTimeout(async () => { try { await interaction.deleteReply(); } catch (_) {} }, 30_000);
+                await sendTemporaryReply(interaction, 'Меню выбора кандидата уже открыто.');
                 return;
             }
 
-            const examineeInfo = message.embeds?.[0]?.fields?.[3]?.value ?? '';
-            const candidates = parseCandidateItems(examineeInfo);
+            const searchResultValue = getFieldValue(message.embeds?.[0], 'Результат поиска пользователя:', '');
+            const candidates = parseCandidateItems(searchResultValue);
 
             if (!candidates.length) {
-                await interaction.editReply({ content: 'Не удалось извлечь кандидатов из сообщения.' });
-                setTimeout(async () => { try { await interaction.deleteReply(); } catch (_) {} }, 30_000);
+                await sendTemporaryReply(interaction, 'Не удалось извлечь кандидатов. Используйте кнопку для вставки Discord ID.');
                 return;
             }
 
-            const options = candidates.slice(0, 25).map((c) => ({
-                label: String(c.displayName || c.id).slice(0, 100) || c.id,
-                value: c.id,
+            const options = candidates.slice(0, 25).map((candidate) => ({
+                label: String(candidate.displayName || candidate.id).slice(0, 100) || candidate.id,
+                value: candidate.id,
             }));
 
             const select = new StringSelectMenuBuilder()
@@ -207,109 +230,153 @@ module.exports = async (client, interaction) => {
                 .addOptions(options);
 
             const selectRow = new ActionRowBuilder().addComponents(select);
+            const buttonsRow = buildSelectionButtonsRow({ chooseDisabled: true });
 
-            const buttonsRow = buildExamButtonsRow({ includeChoose: true, chooseDisabled: true });
+            await editMessageWithRetry(message, { components: [buttonsRow, selectRow] });
+            await sendTemporaryReply(interaction, 'Выберите кандидата из списка под сообщением.');
+            return;
+        }
 
-            await message.edit({ components: [buttonsRow, selectRow] });
+        if (isSetMemberIdButton) {
+            if (!hasExaminerAccessFromInteraction(interaction)) {
+                await replyNoExaminerAccess(interaction);
+                return;
+            }
 
-            await interaction.editReply({ content: 'Выбери кандидата из списка (меню появилось под сообщением).' });
-            setTimeout(async () => { try { await interaction.deleteReply(); } catch (_) {} }, 30_000);
+            const message = interaction.message;
+            const title = String(message.embeds?.[0]?.title || '');
+            if (!title.includes('НУЖЕН ВЫБОР')) {
+                await sendTemporaryReply(interaction, 'Выбор сдающего больше не требуется.');
+                return;
+            }
+
+            const modalId = `exam-set-member-id-${interaction.user.id}`;
+            const modal = new ModalBuilder()
+                .setTitle('Укажите Discord ID сдающего')
+                .setCustomId(modalId);
+
+            const textInput = new TextInputBuilder()
+                .setCustomId('exam-member-id')
+                .setLabel('Discord ID или @пинг')
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+                .setPlaceholder('123456789012345678');
+
+            modal.addComponents(new ActionRowBuilder().addComponents(textInput));
+            await showModalWithRetry(interaction, modal);
+            usedModal = true;
+
+            try {
+                modalInteraction = await interaction.awaitModalSubmit({
+                    filter: (i) => i.customId === modalId && i.user.id === interaction.user.id,
+                    time: 1000 * 60 * 3,
+                });
+            } catch (error) {
+                if (error?.name === 'InteractionCollectorError') {
+                    await followUpWithRetry(interaction, {
+                        content: 'Время на ввод Discord ID истекло (3 минуты). Нажми кнопку ещё раз.',
+                        ephemeral: true,
+                    });
+                    return;
+                }
+                throw error;
+            }
+
+            await deferReplyWithRetry(modalInteraction, { ephemeral: true });
+
+            const rawId = modalInteraction.fields.getTextInputValue('exam-member-id');
+            const memberId = extractDiscordId(rawId);
+            if (!memberId) {
+                await sendTemporaryReply(modalInteraction, 'Не удалось извлечь Discord ID. Введите ID или @пинг.');
+                return;
+            }
+
+            const { guild, hasAccess } = await getExaminerData(client, modalInteraction);
+            if (!hasAccess) {
+                await editReply(4, modalInteraction);
+                return;
+            }
+
+            const chosenMember = await guild.members.fetch(memberId).catch(() => null);
+            if (!chosenMember) {
+                await sendTemporaryReply(modalInteraction, 'Не удалось найти участника по указанному Discord ID.');
+                return;
+            }
+
+            await moveExamToReview(message, chosenMember);
+            await sendTemporaryReply(modalInteraction, `Указан сдающий: ${chosenMember} (${chosenMember.displayName}).`);
             return;
         }
 
         if (isCandidateSelect) {
-            await interaction.deferReply({ ephemeral: true });
+            await deferReplyWithRetry(interaction, { ephemeral: true });
 
-            const guildId = interaction.guildId;
-            const guild = await client.guilds.fetch(guildId);
-            const examinerRoleId = config.servers[guildId].examinerRoleId;
-
-            const examiner = await guild.members.fetch(interaction.user.id);
-            if (!examiner.roles.cache.has(examinerRoleId)) {
+            const { guild, hasAccess } = await getExaminerData(client, interaction);
+            if (!hasAccess) {
                 await editReply(4, interaction);
+                return;
+            }
+
+            const message = interaction.message;
+            const title = String(message.embeds?.[0]?.title || '');
+            if (!title.includes('НУЖЕН ВЫБОР')) {
+                await sendTemporaryReply(interaction, 'Выбор сдающего больше не требуется.');
                 return;
             }
 
             const selectedId = interaction.values?.[0] || null;
             if (!selectedId) {
-                await interaction.editReply({ content: 'Не выбран кандидат.' });
-                setTimeout(async () => { try { await interaction.deleteReply(); } catch (_) {} }, 30_000);
+                await sendTemporaryReply(interaction, 'Не выбран кандидат.');
                 return;
             }
 
-            const chosen = await guild.members.fetch(selectedId).catch(() => null);
-            if (!chosen) {
-                await interaction.editReply({ content: 'Не удалось получить выбранного участника (возможно вышел с сервера).' });
-                setTimeout(async () => { try { await interaction.deleteReply(); } catch (_) {} }, 30_000);
+            const chosenMember = await guild.members.fetch(selectedId).catch(() => null);
+            if (!chosenMember) {
+                await sendTemporaryReply(interaction, 'Не удалось получить выбранного участника. Возможно, он уже покинул сервер.');
                 return;
             }
 
-            const message = interaction.message;
-            const examEmbed = new EmbedBuilder(message.embeds[0]);
-
-            examEmbed.setTitle('Новая сдача экзамена! - НА РАССМОТРЕНИИ');
-            examEmbed.setColor(0x3498DB);
-            upsertField(examEmbed, 'Результат поиска пользователя:', `${chosen} (${chosen.displayName})`, false);
-
-            const buttonsRow = buildExamButtonsRow({ includeChoose: false });
-
-            await message.edit({
-                embeds: [examEmbed],
-                components: [buttonsRow],
-            });
-
-            await interaction.editReply({ content: `Выбран кандидат: ${chosen} (${chosen.displayName}).` });
-            setTimeout(async () => { try { await interaction.deleteReply(); } catch (_) {} }, 30_000);
+            await moveExamToReview(message, chosenMember);
+            await sendTemporaryReply(interaction, `Выбран кандидат: ${chosenMember} (${chosenMember.displayName}).`);
             return;
         }
 
-        const guildId = interaction.guildId;
-        const guild = await client.guilds.fetch(guildId);
-
-        const examResultChannelId = config.servers[guildId].examResultChannelId;
-        const examResultChannel = await client.channels.fetch(examResultChannelId);
-
-        const examinerRoleId = config.servers[guildId].examinerRoleId;
-
         const message = interaction.message;
-        const memberId = interaction.user.id;
-        const examiner = await guild.members.fetch(memberId);
+        const title = String(message.embeds?.[0]?.title || '');
+        if (title.includes('НУЖЕН ВЫБОР') && interaction.customId !== 'exam-spam') {
+            await sendTemporaryReply(interaction, 'Сначала выберите сдающего экзамен.');
+            return;
+        }
+
+        const testName = getFieldValue(message.embeds?.[0], 'Название экзамена:');
+        const needsResultModal =
+            (interaction.customId === 'exam-confirm' || interaction.customId === 'exam-decline') &&
+            testName === 'ПРО (письменный)';
+
+        if (!needsResultModal || interaction.customId === 'exam-spam') {
+            await deferReplyWithRetry(interaction, { ephemeral: true });
+        } else if (!hasExaminerAccessFromInteraction(interaction)) {
+            await replyNoExaminerAccess(interaction);
+            return;
+        }
 
         const examEmbed = new EmbedBuilder(message.embeds[0]);
-
-        // Для будущего меня: порядок полей такой, как мы формируем в webhook:
-        // 0: Название экзамена
-        // 1: Ссылка на результат
-        // 2: Пользователь ввёл
-        // 3: Результат поиска пользователя
-        // 4: Результат экзамена ИЛИ "Экзамен необходимо проверить."
-        const testName = message.embeds?.[0]?.fields?.[0]?.value ?? '—';
-        const examineeInfo = message.embeds?.[0]?.fields?.[3]?.value ?? '—';
-        let result = message.embeds?.[0]?.fields?.[4]?.value ?? '—';
+        const examineeInfo = getFieldValue(message.embeds?.[0], 'Результат поиска пользователя:');
+        let result = getFieldValue(message.embeds?.[0], 'Результат экзамена:');
 
         const channelId = message.channelId;
         const messageId = message.id;
-        const messageLink = `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
+        const messageLink = `https://discord.com/channels/${interaction.guildId}/${channelId}/${messageId}`;
 
-        // Для НЕ письменного — сразу defer, чтобы не ловить "interaction failed"
-        if (testName !== 'ПРО (письменный)' || interaction.customId === 'exam-spam') {
-            await interaction.deferReply({ ephemeral: true });
-        }
-
-        if (!examiner.roles.cache.has(examinerRoleId)) {
-            await editReply(4, interaction);
-            return;
-        }
-
-        // Если письменный — запрашиваем оценку через модалку
-        if ((interaction.customId === 'exam-confirm' || interaction.customId === 'exam-decline') && testName === 'ПРО (письменный)') {
+        if (needsResultModal) {
+            const modalId = `exam-result-${interaction.user.id}`;
             const modal = new ModalBuilder()
-                .setTitle('Проверка ПРО (письменный):')
-                .setCustomId(`exam-${memberId}`);
+                .setTitle('Проверка ПРО (письменный)')
+                .setCustomId(modalId);
 
             const textInput = new TextInputBuilder()
                 .setCustomId('exam-result')
-                .setLabel('Введите результат экзамена (0-10):')
+                .setLabel('Введите результат экзамена (0-10)')
                 .setStyle(TextInputStyle.Short)
                 .setRequired(true)
                 .setPlaceholder('10')
@@ -317,40 +384,45 @@ module.exports = async (client, interaction) => {
                 .setMaxLength(2);
 
             modal.addComponents(new ActionRowBuilder().addComponents(textInput));
-
-            await interaction.showModal(modal);
-
+            await showModalWithRetry(interaction, modal);
             usedModal = true;
 
-            const filter = (i) => i.customId === `exam-${memberId}`;
-
-            // bugfix #1: перекрылся пинг когда прошло время на ввод
             try {
-                modalInteraction = await interaction.awaitModalSubmit({ filter, time: 1000 * 60 * 3 });
-            } catch (err) {
-                if (err?.name === 'InteractionCollectorError') {
-                    await interaction.followUp({
+                modalInteraction = await interaction.awaitModalSubmit({
+                    filter: (i) => i.customId === modalId && i.user.id === interaction.user.id,
+                    time: 1000 * 60 * 3,
+                });
+            } catch (error) {
+                if (error?.name === 'InteractionCollectorError') {
+                    await followUpWithRetry(interaction, {
                         content: 'Время на ввод результата истекло (3 минуты). Нажми кнопку ещё раз.',
-                        ephemeral: true
+                        ephemeral: true,
                     });
                     return;
                 }
-                throw err;
+                throw error;
             }
 
-            await modalInteraction.deferReply({ ephemeral: true });
+            await deferReplyWithRetry(modalInteraction, { ephemeral: true });
 
             const raw = modalInteraction.fields.getTextInputValue('exam-result');
-            const pre = Number(String(raw).replace(',', '.'));
-
-            // Ограничиваем до 10
-            const clamped = Number.isFinite(pre) ? Math.max(0, Math.min(10, Math.floor(pre))) : 0;
+            const parsed = Number(String(raw).replace(',', '.'));
+            const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(10, Math.floor(parsed))) : 0;
 
             if (clamped > 7) result = `${clamped} / 10 - СДАНО ✅`;
             else result = `${clamped} / 10 - НЕ СДАНО ❌`;
         }
 
-        // Отписка в канал итогов
+        const responseInteraction = modalInteraction || interaction;
+        const { examiner, hasAccess } = await getExaminerData(client, responseInteraction);
+        if (!hasAccess) {
+            await editReply(4, responseInteraction);
+            return;
+        }
+
+        const examResultChannelId = config.servers[interaction.guildId].examResultChannelId;
+        const examResultChannel = await client.channels.fetch(examResultChannelId);
+
         if (interaction.customId === 'exam-confirm' || interaction.customId === 'exam-decline') {
             const examResults =
                 `Экзаменатор: ${examiner} (${examiner.displayName})\n` +
@@ -359,16 +431,17 @@ module.exports = async (client, interaction) => {
                 `Тип экзамена: ${testName}\n` +
                 `Результат: ${result}`;
 
-            await examResultChannel.send(examResults);
+            await sendMessageWithRetry(examResultChannel, { content: examResults }, {
+                nonceSeed: `examResult:${interaction.guildId}:${message.id}:${interaction.customId}`,
+            });
         }
 
-        // Обновляем embed (статус + кто проверил)
         const checkedBy = `${examiner} (${examiner.displayName})`;
         upsertField(examEmbed, 'Проверил:', checkedBy, false);
 
         if (interaction.customId === 'exam-confirm') {
-            examEmbed.setTitle('Новая сдача экзамена! - СДАНО');
-            examEmbed.setColor(0x00FF00);
+            examEmbed.setTitle(EXAM_TITLES.passed);
+            examEmbed.setColor(EXAM_COLORS.passed);
             upsertField(examEmbed, 'Результат экзамена:', result, false);
 
             if (testName === 'ПРО (письменный)' && modalInteraction) await editReply(1, modalInteraction);
@@ -376,8 +449,8 @@ module.exports = async (client, interaction) => {
         }
 
         if (interaction.customId === 'exam-decline') {
-            examEmbed.setTitle('Новая сдача экзамена! - НЕ СДАНО');
-            examEmbed.setColor(0xFF0000);
+            examEmbed.setTitle(EXAM_TITLES.failed);
+            examEmbed.setColor(EXAM_COLORS.failed);
             upsertField(examEmbed, 'Результат экзамена:', result, false);
 
             if (testName === 'ПРО (письменный)' && modalInteraction) await editReply(2, modalInteraction);
@@ -385,34 +458,31 @@ module.exports = async (client, interaction) => {
         }
 
         if (interaction.customId === 'exam-spam') {
-            examEmbed.setTitle('Новая сдача экзамена! - БРАК');
-            examEmbed.setColor(0xFF0000);
+            examEmbed.setTitle(EXAM_TITLES.spam);
+            examEmbed.setColor(EXAM_COLORS.spam);
             await editReply(3, interaction);
         }
 
-        // Кнопки убираем, чтобы не было хаоса
-        await message.edit({
+        await editMessageWithRetry(message, {
             content: '',
             embeds: [examEmbed],
             components: [],
         });
     } catch (error) {
-        logger.error('Произошла ошибка при нажатии на кнопку, связанную с итогами экзамена:', error);
+        logger.error('Произошла ошибка при нажатии на кнопку, связанную с экзаменами:', error);
         if (error.rawError) logger.error('Дополнительная информация по предыдущей ошибке:', error.rawError);
 
         const errText = `Произошла ошибка при нажатии на кнопку: ${error}`;
 
         try {
             if (modalInteraction && (modalInteraction.deferred || modalInteraction.replied)) {
-                await modalInteraction.editReply({ content: errText });
-            }
-            else if (usedModal) {
-                await interaction.followUp({ content: errText, ephemeral: true });
-            }
-            else if (interaction.deferred || interaction.replied) {
-                await interaction.editReply({ content: errText });
+                await editReplyWithRetry(modalInteraction, { content: errText });
+            } else if (usedModal) {
+                await followUpWithRetry(interaction, { content: errText, ephemeral: true });
+            } else if (interaction.deferred || interaction.replied) {
+                await editReplyWithRetry(interaction, { content: errText });
             } else {
-                await interaction.reply({ content: errText, ephemeral: true });
+                await replyWithRetry(interaction, { content: errText, ephemeral: true });
             }
         } catch (_) {
             // игнорируем вторую ошибку ответа

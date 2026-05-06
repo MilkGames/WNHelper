@@ -19,6 +19,10 @@ const config = require('../../../../config.json');
 const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 const logger = require('../../../utils/logger');
+const {
+    replyWithRetry,
+    sendMessageWithRetry,
+} = require('../../../utils/discordRequest');
 
 module.exports = {
     name: 'createrules',
@@ -84,15 +88,17 @@ module.exports = {
                 .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
             
             const embeds = [descriptionEmbed, sViolationsEmbed, lsViolationsEmbed, genProvisionsEmbed];
-            await channel.send({ embeds: embeds });
-            await interaction.reply({
+            await sendMessageWithRetry(channel, { embeds: embeds }, {
+                nonceSeed: `createRules:${interaction.guildId}:${channel.id}`,
+            });
+            await replyWithRetry(interaction, {
                 content: `Сообщение создано успешно в канале ${channel}!`,
                 ephemeral: true,
             });
             return;
         } catch (error) {
             logger.info(`Произошла ошибка при публикации правил: ${error}.`);
-            await interaction.reply({
+            await replyWithRetry(interaction, {
                 content: `Произошла ошибка при публикации правил: ${error}.`,
                 ephemeral: true,
             });

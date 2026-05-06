@@ -17,14 +17,18 @@
 */
 const { devs, testServer } = require('../../../config.json');
 const getLocalCommands = require('../../utils/getLocalCommands');
+const {
+    editReplyWithRetry,
+    replyWithRetry,
+} = require('../../utils/discordRequest');
 const logger = require('../../utils/logger');
 
 async function safeReply(interaction, payload) {
     try {
         if (interaction.deferred || interaction.replied) {
-            return await interaction.editReply(payload);
+            return await editReplyWithRetry(interaction, payload);
         }
-        return await interaction.reply(payload);
+        return await replyWithRetry(interaction, payload);
     } catch (_) {
         // игнорируем "Unknown interaction" и подобные
     }

@@ -5,10 +5,11 @@
     "servers": {
         "1275070473474146345":
         {
-            "_comment": "WN Helper",
+            "_serverName": "WN Helper",
             "leaderRoleId": "1293906081927528489",
             "depLeaderRoleId": "1294304324322590730",
             "citizenChannelId": "1293910446969196574",
+            "getRoleChannelId": "1293910359123431424",
             "confirmRoleChannelId": "1293910404572909710",
             "kaChannelId": "1293910674283696169",
             "kaDeleteChannelId": "1293910716163821670",
@@ -57,10 +58,14 @@
         },
         "1249711898744848415":
         {
-            "_comment": "WN Dallas",
+            "_serverName": "WN Dallas",
             "leaderRoleId": "1249711898820214809",
             "depLeaderRoleId": "1249711898820214808",
             "citizenChannelId": "1249711899122339867",
+            "WNLegendRoleId": "1486785623451762779",
+            "WNLegendx2RoleId": "1486785838607110305",
+            "WNLegendx3RoleId": "1486785905216716850",
+            "getRoleChannelId": "1249711899122339863",
             "confirmRoleChannelId": "1451563712396660960",
             "kaChannelId": "1249711899948355587",
             "kaDeleteChannelId": "1451564761539154053",

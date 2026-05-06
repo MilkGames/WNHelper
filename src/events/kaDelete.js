@@ -14,9 +14,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
-*/
+ */
 const { Events } = require('discord.js');
 const config = require('../../config.json');
+const { sendMessageWithRetry } = require('../utils/discordRequest');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -37,7 +38,6 @@ module.exports = {
 
             const guildId = guild.id;
             const serverCfg = config?.servers?.[guildId];
-
             if (!serverCfg) {
                 logger.debug('kaDelete: сервер не настроен, пропускаю', { guildId });
                 return;
@@ -50,9 +50,7 @@ module.exports = {
             }
 
             if (reaction.message.channel.id !== kaChannelId) return;
-
-            const targetEmoji = '❌';
-            if (reaction.emoji?.name !== targetEmoji) return;
+            if (reaction.emoji?.name !== '❌') return;
 
             const kaDeleteChannel = await reaction.message.client.channels.fetch(kaDeleteChannelId).catch(() => null);
             if (!kaDeleteChannel) {
@@ -63,10 +61,13 @@ module.exports = {
             const messageId = reaction.message.id;
             const messageLink = `https://discord.com/channels/${guildId}/${kaChannelId}/${messageId}`;
 
-            await kaDeleteChannel.send(
-                `<@&${leaderRoleId}>, новая заявка на удаление записи из кадрового аудита!
-Ссылка на сообщение: ${messageLink}`,
-            );
+            await sendMessageWithRetry(kaDeleteChannel, {
+                content:
+                    `<@&${leaderRoleId}>, новая заявка на удаление записи из кадрового аудита!\n` +
+                    `Ссылка на сообщение: ${messageLink}`,
+            }, {
+                nonceSeed: `kaDelete:${guildId}:${messageId}`,
+            });
         } catch (error) {
             logger.error('kaDelete: обработчик крашнулся', {}, error);
         }

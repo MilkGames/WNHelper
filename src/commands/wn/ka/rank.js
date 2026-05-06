@@ -19,6 +19,14 @@ const config = require('../../../../config.json');
 const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 const logger = require('../../../utils/logger');
+const {
+    deferReplyWithRetry,
+    deleteReplyWithRetry,
+    editReplyWithRetry,
+    replyWithRetry,
+    runDiscordRequest,
+    sendMessageWithRetry,
+} = require('../../../utils/discordRequest');
 
 async function editReply(type, interaction, member, kachannel) {
     let content;
@@ -46,14 +54,14 @@ async function editReply(type, interaction, member, kachannel) {
             break;
     }
 
-    await interaction.editReply({
+    await editReplyWithRetry(interaction, {
         content: content,
         ephemeral: true, 
     });
 
     setTimeout(async () => {
         try {
-            await interaction.deleteReply();
+            await deleteReplyWithRetry(interaction);
         } catch (error) {
             logger.info(`Не удалось удалить ответ: ${error}`);
         }
@@ -61,12 +69,50 @@ async function editReply(type, interaction, member, kachannel) {
     return;
 }
 
-async function changeRank(member, oldRank, newRank) {
-    const newRole = member.guild.roles.cache.get(newRank);
-    if (newRole) await member.roles.add(newRole);
-    const oldRole = member.guild.roles.cache.get(oldRank);
-    if (oldRole) await member.roles.remove(oldRole);
-    return;
+function getRankRoleIds(serverCfg) {
+    return [
+        null,
+        serverCfg.firstRankRoleId,
+        serverCfg.secondRankRoleId,
+        serverCfg.thirdRankRoleId,
+        serverCfg.fourthRankRoleId,
+        serverCfg.fifthRankRoleId,
+        serverCfg.sixthRankRoleId,
+        serverCfg.seventhRankRoleId,
+        serverCfg.eighthRankRoleId,
+    ];
+}
+
+function getUniqueConfiguredRankRoleIds(serverCfg) {
+    return [...new Set(getRankRoleIds(serverCfg).filter((roleId) => typeof roleId === 'string' && roleId.trim()))];
+}
+
+async function syncRankRoles(member, serverCfg, newRank) {
+    const rankRoleIds = getRankRoleIds(serverCfg);
+    const nextRoleId = rankRoleIds[newRank] || null;
+
+    for (const roleId of getUniqueConfiguredRankRoleIds(serverCfg)) {
+        if (!member.roles.cache.has(roleId)) continue;
+
+        try {
+            await runDiscordRequest(() => member.roles.remove(roleId));
+        } catch (error) {
+            logger.error(`Не удалось снять роль ранга ${roleId} у пользователя ${member.id}: ${error}`);
+        }
+    }
+
+    if (!nextRoleId) {
+        logger.warn(`Для ранга ${newRank} не настроена роль в config.json.`);
+        return;
+    }
+
+    const newRole = member.guild.roles.cache.get(nextRoleId);
+    if (!newRole) {
+        logger.warn(`Роль ранга ${newRank} (${nextRoleId}) не найдена на сервере ${member.guild.id}.`);
+        return;
+    }
+
+    await runDiscordRequest(() => member.roles.add(newRole));
 }
 
 module.exports = {
@@ -104,7 +150,7 @@ module.exports = {
 
     callback: async (client, interaction) => {
         try {
-            await interaction.deferReply({ ephemeral: true });
+            await deferReplyWithRetry(interaction, { ephemeral: true });
 
             const guildId = interaction.guildId;
             const guild = await client.guilds.fetch(guildId);
@@ -155,7 +201,7 @@ module.exports = {
             const rank = rankMatch ? parseInt(rankMatch[1], 10) : NaN;
 
             if (!Number.isFinite(rank) || rank < 1 || rank > 8) {
-                await interaction.editReply({
+                await editReplyWithRetry(interaction, {
                     content: 'Запрошенный ранг выше, чем доступно в текущем конфиге (максимум 8).',
                     ephemeral: true,
                 });
@@ -179,62 +225,44 @@ module.exports = {
 
             const isGuildMember = member && typeof member === 'object' && member.roles && member.guild;
 
-            // Автосмена ролей/ника — только если member реально GuildMember (т.е. был пинг)
-            // Понижения редки, но бывают, сделаем на всякий проверку
-            // Если пишут вручную... пусть учатся правильно писать нужное в поле action!!!
-            if (isGuildMember && member.nickname && isPromotion) {
-                switch (rank) {
-                    case 2: {
-                        await changeRank(
-                            member,
-                            config.servers[guildId].firstRankRoleId,
-                            config.servers[guildId].secondRankRoleId
-                        );
+            // автосмена ролей/ника — только если member реально GuildMember (т.е. был пинг)
+            // перед выдачей новой роли ранга снимаем все роли рангов, чтобы убрать накопившиеся дубли
+            if (isGuildMember) {
+                const serverCfg = config.servers[guildId];
+                await syncRankRoles(member, serverCfg, rank);
 
-                        const tdRole = member.guild.roles.cache.get(config.servers[guildId].traineeRoleId);
-                        if (tdRole) await member.roles.remove(tdRole);
+                if (rank >= 2) {
+                    const tdRole = member.guild.roles.cache.get(serverCfg.traineeRoleId);
+                    if (tdRole && member.roles.cache.has(tdRole.id)) {
+                        await runDiscordRequest(() => member.roles.remove(tdRole));
+                    }
+                }
 
-                        let prefix = "";
-                        if (member.roles.cache.has(config.servers[guildId].RDDRoleId)) prefix = "RDD";
-                        if (member.roles.cache.has(config.servers[guildId].AMDRoleId)) prefix = "AMD";
-                        if (member.roles.cache.has(config.servers[guildId].EDRoleId)) prefix = "ED";
-                        if (member.roles.cache.has(config.servers[guildId].JDRoleId)) prefix = "JD";
+                if (member.nickname && isPromotion && rank === 2) {
+                    let prefix = "";
+                    if (member.roles.cache.has(serverCfg.RDDRoleId)) prefix = "RDD";
+                    if (member.roles.cache.has(serverCfg.AMDRoleId)) prefix = "AMD";
+                    if (member.roles.cache.has(serverCfg.EDRoleId)) prefix = "ED";
+                    if (member.roles.cache.has(serverCfg.JDRoleId)) prefix = "JD";
 
-                        let baseNickName = memberNick.split('|')[1]?.trim() ?? memberNick;
-                        let preNickName = `${prefix} | ${baseNickName} | ${staticId}`;
+                    let baseNickName = memberNick.split('|')[1]?.trim() ?? memberNick;
+                    let preNickName = `${prefix} | ${baseNickName} | ${staticId}`;
 
-                        let newNickName = preNickName;
-                        if (preNickName.length > 32) {
-                            for (let i = 0; i < baseNickName.length; i++) {
-                                if (baseNickName[i] === ' ') {
-                                    newNickName = `${prefix} | ${baseNickName.slice(0, i + 2)}. | ${staticId}`;
-                                    break;
-                                }
+                    let newNickName = preNickName;
+                    if (preNickName.length > 32) {
+                        for (let i = 0; i < baseNickName.length; i++) {
+                            if (baseNickName[i] === ' ') {
+                                newNickName = `${prefix} | ${baseNickName.slice(0, i + 2)}. | ${staticId}`;
+                                break;
                             }
                         }
-
-                        try {
-                            await member.setNickname(`${newNickName}`);
-                        } catch (error) {
-                            logger.info(`Ошибка при изменении ника: ${error}`);
-                        }
-                        break;
                     }
-                    case 3:
-                        await changeRank(member, config.servers[guildId].firstRankRoleId, config.servers[guildId].thirdRankRoleId);
-                        break;
-                    case 4:
-                        await changeRank(member, config.servers[guildId].thirdRankRoleId, config.servers[guildId].fourthRankRoleId);
-                        break;
-                    case 5:
-                        await changeRank(member, config.servers[guildId].fourthRankRoleId, config.servers[guildId].fifthRankRoleId);
-                        break;
-                    case 6:
-                        await changeRank(member, config.servers[guildId].fifthRankRoleId, config.servers[guildId].sixthRankRoleId);
-                        break;
-                    case 7:
-                        await changeRank(member, config.servers[guildId].sixthRankRoleId, config.servers[guildId].seventhRankRoleId);
-                        break;
+
+                    try {
+                        await runDiscordRequest(() => member.setNickname(`${newNickName}`));
+                    } catch (error) {
+                        logger.info(`Ошибка при изменении ника: ${error}`);
+                    }
                 }
             }
 
@@ -257,11 +285,13 @@ module.exports = {
                 { name: 'Причина:', value: `${reason}` }
             );
 
-            await kachannel.send({ embeds: [rankEmbed] });
+            await sendMessageWithRetry(kachannel, { embeds: [rankEmbed] }, {
+                nonceSeed: `kaRank:${guildId}:${userId}:${memberId}:${staticId}:${action}`,
+            });
 
             if (kachannel?.id === interaction.channelId) {
-                await interaction.editReply({ content: 'Meow!', ephemeral: true });
-                await interaction.deleteReply();
+                await editReplyWithRetry(interaction, { content: 'Meow!', ephemeral: true });
+                await deleteReplyWithRetry(interaction);
             } else {
                 await editReply(3, interaction, member, kachannel);
             }
@@ -270,12 +300,12 @@ module.exports = {
 
             try {
                 if (interaction.deferred || interaction.replied) {
-                    await interaction.editReply({
+                    await editReplyWithRetry(interaction, {
                         content: `Произошла ошибка изменения ранга в КА: ${error}`,
                         ephemeral: true,
                     });
                 } else {
-                    await interaction.reply({
+                    await replyWithRetry(interaction, {
                         content: `Произошла ошибка изменения ранга в КА: ${error}`,
                         ephemeral: true,
                     });

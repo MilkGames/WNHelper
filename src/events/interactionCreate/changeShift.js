@@ -18,6 +18,16 @@
 
 const config = require('../../../config.json');
 const amdShifts = require('../../models/amdShifts');
+const {
+	deferReplyWithRetry,
+	deleteReplyWithRetry,
+	editMessageWithRetry,
+	editReplyWithRetry,
+	replyWithRetry,
+	runDiscordRequest,
+	sendMessageWithRetry,
+	startThreadWithRetry,
+} = require('../../utils/discordRequest');
 const logger = require('../../utils/logger');
 
 const {
@@ -33,9 +43,9 @@ const {
 
 async function safeReply(interaction, payload) {
 	if (interaction.replied || interaction.deferred) {
-		return interaction.editReply(payload).catch(() => {});
+		return editReplyWithRetry(interaction, payload).catch(() => {});
 	}
-	return interaction.reply(payload).catch(() => {});
+	return replyWithRetry(interaction, payload).catch(() => {});
 }
 
 function countUserShifts(shiftsRecord, userId) {
@@ -52,7 +62,7 @@ async function replyAndAutoDelete(interaction, content) {
 	setTimeout(async () => {
 		try {
 			if (interaction.deferred || interaction.replied) {
-				await interaction.deleteReply();
+				await deleteReplyWithRetry(interaction);
 			}
 		} catch (error) {
 			logger.error(`AMD смены: не удалось удалить ответ интеракции: ${error}`);
@@ -66,23 +76,43 @@ async function threadEdit(message, shiftNumber, formattedDate, currentMember, us
 
 	let thread = existingThread;
 	if (!thread) {
-		thread = await message.startThread({
-			name: threadName,
-			autoArchiveDuration: 60,
-		});
+		try {
+			thread = await startThreadWithRetry(message, {
+				name: threadName,
+				autoArchiveDuration: 60,
+			});
+		} catch (error) {
+			const activeThreads = await runDiscordRequest(() => message.channel.threads.fetchActive()).catch(() => null);
+			thread = activeThreads?.threads?.find((item) => item.name === threadName) || null;
+			if (!thread) {
+				throw error;
+			}
+		}
 	}
 
 	if (deleted) {
 		if (currentMember === userId) {
-			await thread.send(`${userMentionText} снял себя со смены номер ${shiftNumber}.`);
+			await sendMessageWithRetry(thread, {
+				content: `${userMentionText} снял себя со смены номер ${shiftNumber}.`,
+			}, {
+				nonceSeed: `amdThread:${message.id}:${shiftNumber}:${userId}:self-delete`,
+			});
 		} else {
 			const currentMention = /^\d{17,20}$/.test(String(currentMember)) ? `<@${currentMember}>` : currentMember;
-			await thread.send(`${userMentionText} снял ${currentMention} со смены номер ${shiftNumber}.`);
+			await sendMessageWithRetry(thread, {
+				content: `${userMentionText} снял ${currentMention} со смены номер ${shiftNumber}.`,
+			}, {
+				nonceSeed: `amdThread:${message.id}:${shiftNumber}:${userId}:${currentMember}:delete`,
+			});
 		}
 		return;
 	}
 
-	await thread.send(`${userMentionText} занял смену номер ${shiftNumber}.`);
+	await sendMessageWithRetry(thread, {
+		content: `${userMentionText} занял смену номер ${shiftNumber}.`,
+	}, {
+		nonceSeed: `amdThread:${message.id}:${shiftNumber}:${userId}:take`,
+	});
 }
 
 function buildOutcomeText({ shiftNumber, currentMember, userId, userMentionText, headRoleId, deleted, badRequest }) {
@@ -109,7 +139,7 @@ module.exports = async (client, interaction) => {
 	if (!shiftConfig) return;
 
 	try {
-		await interaction.deferReply({ ephemeral: true }).catch(() => {});
+		await deferReplyWithRetry(interaction, { ephemeral: true }).catch(() => {});
 
 		const guildId = interaction.guildId;
 		const serverConfig = config.servers[guildId];
@@ -147,7 +177,7 @@ module.exports = async (client, interaction) => {
 		let deleted = false;
 		let badRequest = false;
 
-		// Если смена свободна — пробуем занять
+		// если смена свободна - пробуем занять
 		if (currentMember === FREE_SHIFT_VALUE) {
 			const category = getMemberCategory(member, serverConfig);
 			const allowed = Boolean(category) && (access.currentCategories || []).includes(category);
@@ -172,12 +202,12 @@ module.exports = async (client, interaction) => {
 				return;
 			}
 
-			// Занимать можно только если смена всё ещё свободна
+			// занимать можно только если смена всё ещё свободна
 			const takeQuery = { ...query, [shiftConfig.field]: FREE_SHIFT_VALUE };
 			const takeRes = await amdShifts.updateOne(takeQuery, { [shiftConfig.field]: userId });
 
 			if (!takeRes || takeRes.matchedCount === 0) {
-				// Кто-то занял раньше нас — никого не перезаписали
+				// кто-то занял раньше нас - никого не перезаписали
 				const fresh = await amdShifts.findOne(query);
 				if (fresh) currentMember = fresh[shiftConfig.field] || currentMember;
 
@@ -195,14 +225,14 @@ module.exports = async (client, interaction) => {
 				return;
 			}
 
-			// Обновляем локальную копию, чтобы не делать второй findOne
+			// обновляем локальную копию, чтобы не делать второй findOne
 			shiftsRecord[shiftConfig.field] = userId;
 		} else {
-			// Если смена занята — можно снять себя, либо старший AMD может снять любого
+			// если смена занята - можно снять себя, либо старший AMD может снять любого
 			const canForceDelete = Boolean(headRoleId) && member.roles.cache.has(headRoleId);
 
 			if (currentMember === userId || canForceDelete) {
-				// Освобождать можно только если значение не поменялось
+				// освобождать можно только если значение не поменялось
 				const expected = canForceDelete ? currentMember : userId;
 				const delQuery = { ...query, [shiftConfig.field]: expected };
 				const delRes = await amdShifts.updateOne(delQuery, { [shiftConfig.field]: FREE_SHIFT_VALUE });
@@ -243,7 +273,7 @@ module.exports = async (client, interaction) => {
 			}
 		}
 
-		// Пересобираем расписание из обновлённой локальной копии (без повторного findOne)
+		// пересобираем расписание из обновлённой локальной копии (без повторного findOne)
 		const shiftLines = await buildShiftLines(client, shiftsRecord);
 		const content = buildScheduleMessageContent({
 			formattedDate,
@@ -254,7 +284,7 @@ module.exports = async (client, interaction) => {
 			nowMs,
 		});
 
-		await message.edit({ content });
+		await editMessageWithRetry(message, { content });
 
 		await threadEdit(
 			message,

@@ -19,6 +19,11 @@ const config = require('../../../../config.json');
 const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 const logger = require('../../../utils/logger');
+const {
+    deferReplyWithRetry,
+    editReplyWithRetry,
+    sendMessageWithRetry,
+} = require('../../../utils/discordRequest');
 
 module.exports = {
     name: 'createkainfo',
@@ -38,7 +43,7 @@ module.exports = {
 
     callback: async (client, interaction) => {
         try {
-            await interaction.deferReply({ ephemeral: true });
+            await deferReplyWithRetry(interaction, { ephemeral: true });
             const channel = interaction.options.getChannel('channel');
             if (!channel) return;
 
@@ -110,6 +115,10 @@ module.exports = {
 
 - **static** - Автоматически выдаст ошибку при его отсутствии
 
+**Дополнительная информация:**
+
+В случае, если опция **action** имеет внутри слово "Повышен", происходят события, указанные в "Дополнительная информация" в "Повышение сотрудников по отчёту".
+
 Также вам не нужно отправлять данную команду в канале кадрового аудита.
 Кадровый аудит автоматически заполнится в том канале, в котором необходимо.`);
 
@@ -118,7 +127,12 @@ module.exports = {
                 .setDescription(`\`\`\`Повышение сотрудников по отчёту\`\`\`
 У бота есть функционал для мгновенного повышения сотрудников по отчёту на повышение.
 Для этого необходимо нажать правой кнопкой мыши по **отчёту** сотрудника, выбрать **Приложения** и нажать на кнопку **Повысить по отчёту**.
-Бот автоматически за вас заполнит кадровый аудит и сам подберёт переменные, которые ему нужны для кадрового аудита.
+Бот автоматически за вас заполнит кадровый аудит, сам подберёт переменные, которые ему нужны для кадрового аудита и изменит роли.
+
+**Дополнительная информация:**
+- При **любом** повышении роль ранга изменится, если новый ранг идёт сразу после предыдущего (к примеру, 1-2, 2-3 и т.д.)
+- При повышении с 1 на 2 ранг, если у сотрудника была роль соответствующего отдела (не стажировки), отдел в его никнейме автоматически изменится, а роль стажировки снимется
+
 Также бот сам за вас поставит галочку на отчёте на повышение.`);
 
             const uvalEmbed = new EmbedBuilder()
@@ -146,8 +160,8 @@ module.exports = {
 - **static** - Автоматически заполняется в зависимости от того, какой статик указан у сотрудника в дискорде.
 - - В случае, если в его дискорде статик не указан - бот выдаст ошибку.
 
-Также никнейм сотрудника будет автоматически изменён и все роли, которые у него были (кроме Гражданин, Везунчик и WN Legend) будут с него сняты.
-В случае, если роли Гражданин у сотрудника не было, он её получит.
+Также никнейм сотрудника будет автоматически изменён и все роли, которые у него были (кроме Читатель) будут с него сняты.
+В случае, если роли Читатель у сотрудника не было, он её получит.
 
 В случае, если указан **никнейм сотрудника** и не указаны другие данные, опции принимают следующие значения:
 
@@ -173,8 +187,10 @@ module.exports = {
 
             const embeds = [inviteEmbed, rankEmbed, rankReportEmbed, uvalEmbed, uvalReportEmbed, deleteEmbed];
 
-            await channel.send({ embeds: embeds });
-            await interaction.editReply({
+            await sendMessageWithRetry(channel, { embeds: embeds }, {
+                nonceSeed: `createKaInfo:${interaction.guildId}:${channel.id}`,
+            });
+            await editReplyWithRetry(interaction, {
                 content: `Сообщение создано успешно в канале ${channel}!`,
                 ephemeral: true,
             });
@@ -182,7 +198,7 @@ module.exports = {
         } catch (error) {
             logger.info(`Произошла ошибка при создании сообщения с информацией о кадровом аудите: ${error}`);
             if (!interaction.replied) {
-                await interaction.editReply({
+                await editReplyWithRetry(interaction, {
                     content: `Произошла ошибка при создании сообщения с информацией о кадровом аудите: ${error}`,
                     ephemeral: true,
                 });

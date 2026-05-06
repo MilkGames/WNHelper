@@ -1,3 +1,20 @@
+/*
+ * WN Helper Discord Bot
+ * Copyright (C) 2026 MilkGames
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
 const giveRoles = require('../models/giveRoles');
 
 function normalizeText(text) {
@@ -14,7 +31,7 @@ function extractDiscordId(text) {
 }
 
 function extractStatic(text) {
-    // Статик обычно 2-7 цифр, остальное Discord ID
+    // статик обычно 2-7 цифр, остальное Discord ID
     const s = String(text || '');
     const m = s.match(/\b(\d{2,7})\b/);
     return m ? m[1] : null;
@@ -49,14 +66,14 @@ function scoreCandidate(member, nameTokens, staticMatch) {
     for (const t of nameTokens) {
         if (!t || t.length < 2) continue;
 
-        // Приоритет displayName
+        // приоритет displayName
         if (displayName.includes(t)) {
             score += 15;
             matched += 1;
             continue;
         }
 
-        // Потом username/globalName
+        // потом username/globalName
         const inOther = fields.slice(1).some((words) => words.some((w) => w.includes(t) || t.includes(w)));
         if (inOther) {
             score += 8;
@@ -64,7 +81,7 @@ function scoreCandidate(member, nameTokens, staticMatch) {
             continue;
         }
 
-        // И в крайнем случае - по словам
+        // и в крайнем случае - по словам
         if (allWords.has(t)) {
             score += 6;
             matched += 1;
@@ -107,7 +124,7 @@ async function resolveExamMember(guild, rawInput) {
         const cached = guild.members.cache.find((m) => (m.displayName || '').includes(staticMatch)) || null;
         if (cached) return { member: cached, candidates: [] };
 
-        // Попытка по локальной базе (если когда-то записывали static -> userId)
+        // попытка по локальной базе (если когда-то записывали static -> userId)
         const rec = await giveRoles.findOne({ guildId: guild.id, static: staticMatch }).catch(() => null);
         if (rec?.userId) {
             const m = await guild.members.fetch(rec.userId).catch(() => null);
@@ -123,7 +140,7 @@ async function resolveExamMember(guild, rawInput) {
 
     if (tokens.length === 0) return { member: null, candidates: [] };
 
-    // Сначала пробуем по кэшу
+    // сначала пробуем по кэшу
     const cacheCandidates = Array.from(guild.members.cache.values());
     const cacheMatched = cacheCandidates.filter((m) => {
         const dn = normalizeText(m.displayName || '');
@@ -131,14 +148,14 @@ async function resolveExamMember(guild, rawInput) {
     });
     if (cacheMatched.length === 1) return { member: cacheMatched[0], candidates: [] };
 
-    // Потом REST поиск по каждому токену
+    // потом REST поиск по каждому токену
     const map = new Map();
     for (const t of tokens) {
         const res = await searchMembers(guild, t, 25);
         for (const m of res) map.set(m.id, m);
     }
 
-    // Добавим кандидатов из кэша
+    // добавим кандидатов из кэша
     for (const m of cacheMatched) map.set(m.id, m);
 
     const candidates = Array.from(map.values());
@@ -161,7 +178,7 @@ async function resolveExamMember(guild, rawInput) {
         return { member: top.m, candidates: [] };
     }
 
-    // Неоднозначно - вернём 5 лучших
+    // неоднозначно - вернём 5 лучших
     return {
         member: null,
         candidates: ranked.slice(0, 5).map((x) => x.m),
@@ -170,4 +187,5 @@ async function resolveExamMember(guild, rawInput) {
 
 module.exports = {
     resolveExamMember,
+    extractDiscordId,
 };

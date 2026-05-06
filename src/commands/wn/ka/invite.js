@@ -19,6 +19,13 @@ const config = require('../../../../config.json');
 const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 const logger = require('../../../utils/logger');
+const {
+	deferReplyWithRetry,
+	deleteReplyWithRetry,
+	editReplyWithRetry,
+	replyWithRetry,
+	sendMessageWithRetry,
+} = require('../../../utils/discordRequest');
 
 async function editReply(type, interaction, member, kachannel) {
 	let content;
@@ -47,14 +54,14 @@ async function editReply(type, interaction, member, kachannel) {
 			break;
 	}
 
-	await interaction.editReply({
+	await editReplyWithRetry(interaction, {
 		content,
 		ephemeral: true,
 	});
 
 	setTimeout(async () => {
 		try {
-			await interaction.deleteReply();
+			await deleteReplyWithRetry(interaction);
 		} catch (error) {
 			logger.info(`Не удалось удалить ответ: ${error}`);
 		}
@@ -169,7 +176,9 @@ async function sendKaInviteRecord(client, params) {
 			{ name: 'Причина:', value: `${reason}` },
 		);
 
-		await kachannel.send({ embeds: [inviteEmbed] });
+		await sendMessageWithRetry(kachannel, { embeds: [inviteEmbed] }, {
+			nonceSeed: `kaInvite:${guildId}:${inviterId}:${acceptedId || acceptedText}:${staticId}:${rank}`,
+		});
 		return true;
 	} catch (error) {
 		logger.info(`invite.js: ошибка при отправке записи принятия в КА: ${error}`);
@@ -211,7 +220,7 @@ module.exports = {
 
 	callback: async (client, interaction) => {
 		try {
-			await interaction.deferReply({ ephemeral: true });
+			await deferReplyWithRetry(interaction, { ephemeral: true });
 
 			const guildId = interaction.guildId;
 			const guild = await client.guilds.fetch(guildId);
@@ -284,7 +293,7 @@ module.exports = {
 			}
 
 			if (!ok) {
-				await interaction.editReply({
+				await editReplyWithRetry(interaction, {
 					content: 'Не удалось отправить запись в кадровый аудит (проверьте доступы/данные).',
 					ephemeral: true,
 				});
@@ -292,8 +301,8 @@ module.exports = {
 			}
 
 			if (kachannel?.id === interaction.channelId) {
-				await interaction.editReply({ content: 'Meow!', ephemeral: true });
-				await interaction.deleteReply();
+				await editReplyWithRetry(interaction, { content: 'Meow!', ephemeral: true });
+				await deleteReplyWithRetry(interaction);
 			} else {
 				await editReply(3, interaction, member, kachannel);
 			}
@@ -302,12 +311,12 @@ module.exports = {
 
 			try {
 				if (interaction.deferred || interaction.replied) {
-					await interaction.editReply({
+					await editReplyWithRetry(interaction, {
 						content: `Произошла ошибка отписи инвайта в КА: ${error}`,
 						ephemeral: true,
 					});
 				} else {
-					await interaction.reply({
+					await replyWithRetry(interaction, {
 						content: `Произошла ошибка отписи инвайта в КА: ${error}`,
 						ephemeral: true,
 					});

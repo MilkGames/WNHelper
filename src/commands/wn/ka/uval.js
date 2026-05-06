@@ -19,6 +19,14 @@ const config = require('../../../../config.json');
 const { ApplicationCommandOptionType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 const logger = require('../../../utils/logger');
+const {
+    deferReplyWithRetry,
+    deleteReplyWithRetry,
+    editReplyWithRetry,
+    replyWithRetry,
+    runDiscordRequest,
+    sendMessageWithRetry,
+} = require('../../../utils/discordRequest');
 
 async function editReply(type, interaction, member, kachannel) {
     let content;
@@ -42,14 +50,14 @@ async function editReply(type, interaction, member, kachannel) {
             break;
     }
 
-    await interaction.editReply({
+    await editReplyWithRetry(interaction, {
         content: content,
         ephemeral: true, 
     });
 
     setTimeout(async () => {
         try {
-            await interaction.deleteReply();
+            await deleteReplyWithRetry(interaction);
         } catch (error) {
             logger.info(`Не удалось удалить ответ: ${error}`);
         }
@@ -86,7 +94,7 @@ module.exports = {
 
     callback: async (client, interaction) => {
         try {
-            await interaction.deferReply({ ephemeral: true });
+            await deferReplyWithRetry(interaction, { ephemeral: true });
 
             const guildId = interaction.guildId;
             const guild = await client.guilds.fetch(guildId);
@@ -122,19 +130,26 @@ module.exports = {
                     staticId = match[1];
 
                     const citizenRoleId = config.servers[guildId].citizenRoleId;
+                    const WNLegendRoleId = config.servers[guildId].WNLegendRoleId;
+                    const WNLegendx2RoleId = config.servers[guildId].WNLegendx2RoleId;
+                    const WNLegendx3RoleId = config.servers[guildId].WNLegendx3RoleId;
                     const rolesToRemove = member.roles.cache.filter(role =>
-                        role.id !== citizenRoleId && role.id !== guildId
+                        role.id !== citizenRoleId && 
+                        role.id !== WNLegendRoleId &&
+                        role.id !== WNLegendx2RoleId &&
+                        role.id !== WNLegendx3RoleId &&
+                        role.id !== guildId
                     );
 
-                    await member.roles.remove(rolesToRemove);
+                    await runDiscordRequest(() => member.roles.remove(rolesToRemove));
 
                     if (!member.roles.cache.has(citizenRoleId)) {
-                        await member.roles.add(citizenRoleId);
+                        await runDiscordRequest(() => member.roles.add(citizenRoleId));
                     }
 
                     const newNickname = memberNick.replace(/^[^|]*\s*\|\s*/, '');
                     try {
-                        await member.setNickname(newNickname);
+                        await runDiscordRequest(() => member.setNickname(newNickname));
                     } catch (error) {
                         logger.error('Ошибка при изменении ника: ', error);
                     }
@@ -169,11 +184,13 @@ module.exports = {
                 { name: 'Причина:', value: `${reason}` },
             );
 
-            await kachannel.send({ embeds: [uvalEmbed] });
+            await sendMessageWithRetry(kachannel, { embeds: [uvalEmbed] }, {
+                nonceSeed: `kaUval:${guildId}:${userId}:${memberId}:${staticId}:${reason}`,
+            });
 
             if (kachannel?.id === interaction.channelId) {
-                await interaction.editReply({ content: 'Meow!', ephemeral: true });
-                await interaction.deleteReply();
+                await editReplyWithRetry(interaction, { content: 'Meow!', ephemeral: true });
+                await deleteReplyWithRetry(interaction);
             } else {
                 await editReply(3, interaction, member, kachannel);
             }
@@ -182,12 +199,12 @@ module.exports = {
 
             try {
                 if (interaction.deferred || interaction.replied) {
-                    await interaction.editReply({
+                    await editReplyWithRetry(interaction, {
                         content: `Произошла ошибка при увольнении в КА: ${error}`,
                         ephemeral: true,
                     });
                 } else {
-                    await interaction.reply({
+                    await replyWithRetry(interaction, {
                         content: `Произошла ошибка при увольнении в КА: ${error}`,
                         ephemeral: true,
                     });

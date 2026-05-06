@@ -22,10 +22,12 @@ const {
 	ButtonStyle,
 } = require('discord.js');
 
+const crypto = require('crypto');
+
 const config = require('../../config.json');
 const giveRoles = require('../models/giveRoles');
 const blackListGiveRoles = require('../models/blackListGiveRoles');
-const logger = require('./logger');
+const { sendMessageWithRetry } = require('./discordRequest');
 
 function validateNickname(nickname) {
 	if (!nickname) return false;
@@ -41,7 +43,77 @@ function validateStatic(staticId) {
 	return true;
 }
 
-async function createGiveRolesRequest(client, guildId, userId, nickname, staticId, inviteUserId) {
+const ACTIVE_REQUEST_STATUSES = ['creating', 'pending', 'processing', undefined, null];
+const CREATING_STALE_MS = 2 * 60 * 1000;
+const PENDING_FETCH_GRACE_MS = 30 * 1000;
+
+function createRequestId() {
+	return `${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
+}
+
+function getRecordAgeMs(record) {
+	const timestamp = Number(record?.updatedAt || record?.createdAt || 0);
+	if (!timestamp) return Number.MAX_SAFE_INTEGER;
+	return Math.max(0, Date.now() - timestamp);
+}
+
+function isActiveGiveRolesMessage(message) {
+	if (!message) return false;
+
+	const hasButtons = Array.isArray(message.components) && message.components.some((row) => {
+		return Array.isArray(row.components) && row.components.length > 0;
+	});
+
+	const title = String(message.embeds?.[0]?.title || '');
+	return hasButtons && title.includes('НА РАССМОТРЕНИИ');
+}
+
+async function cleanupBrokenActiveRequest({ guildId, userId, channel }) {
+	const existing = await giveRoles.findOne({
+		guildId,
+		userId,
+		status: { $in: ACTIVE_REQUEST_STATUSES },
+	});
+
+	if (!existing) {
+		return { activeExists: false };
+	}
+
+	const status = existing.status || 'pending';
+	const ageMs = getRecordAgeMs(existing);
+
+	if (status === 'processing') {
+		return { activeExists: true };
+	}
+
+	if (status === 'creating') {
+		if (ageMs <= CREATING_STALE_MS) {
+			return { activeExists: true };
+		}
+
+		await giveRoles.deleteOne({ guildId, userId, status: 'creating' });
+		return { activeExists: false, cleaned: true };
+	}
+
+	if (existing.messageId && channel && typeof channel.messages?.fetch === 'function') {
+		const message = await channel.messages.fetch(existing.messageId).catch(() => null);
+		if (isActiveGiveRolesMessage(message)) {
+			return { activeExists: true };
+		}
+
+		await giveRoles.deleteOne({ guildId, userId, status: existing.status });
+		return { activeExists: false, cleaned: true };
+	}
+
+	if (ageMs <= PENDING_FETCH_GRACE_MS) {
+		return { activeExists: true };
+	}
+
+	await giveRoles.deleteOne({ guildId, userId, status: existing.status });
+	return { activeExists: false, cleaned: true };
+}
+
+async function createGiveRolesRequest(client, guildId, userId, nickname, staticId) {
 	const serverCfg = config.servers[guildId];
 	if (!serverCfg) return { ok: false, code: 'no_config' };
 
@@ -53,80 +125,118 @@ async function createGiveRolesRequest(client, guildId, userId, nickname, staticI
 	const ifBlackListGiveRoles = await blackListGiveRoles.findOne(query);
 	if (ifBlackListGiveRoles) return { ok: false, code: 'blacklist' };
 
-	const ifGiveRoles = await giveRoles.findOne(query);
-	if (ifGiveRoles) {
+	const confirmChannelId = serverCfg.confirmRoleChannelId;
+	const channel = await client.channels.fetch(confirmChannelId).catch(() => null);
+	if (!channel) {
+		return { ok: false, code: 'no_channel' };
+	}
+
+	const cleanup = await cleanupBrokenActiveRequest({ guildId, userId, channel });
+	if (cleanup.activeExists) {
 		return {
 			ok: false,
 			code: 'exists',
-			inviteUserId: ifGiveRoles.invite_nick,
 		};
 	}
 
-	const confirmChannelId = serverCfg.confirmRoleChannelId;
-	const channel = await client.channels.fetch(confirmChannelId).catch(() => null);
-	if (!channel) return { ok: false, code: 'no_channel' };
-
-	const userPing = await client.users.fetch(userId).catch(() => null);
-	const userMention = userPing ? `${userPing}` : `<@${userId}>`;
-
-	const embed = new EmbedBuilder()
-		.setColor(0x3498DB)
-		.setTitle('Заявка на выдачу ролей - НА РАССМОТРЕНИИ')
-		.setDescription(
-			`Заявка от ${userMention}. Discord ID: ${userId}.\n` +
-			`Уважаемый сотрудник Weazel News!\n` +
-			`Обратите внимание на то как записаны Имя Фамилия и статик персонажа!\n` +
-			`Проверьте данные дважды перед тем, как одобрять заявку!\n` +
-			`Пользователь оставил следующие данные:`
-		)
-		.addFields(
-			{ name: 'Имя Фамилия:', value: nickname },
-			{ name: 'Статик:', value: staticId },
-		)
-		.setTimestamp()
-		.setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
-
-	const row = new ActionRowBuilder().addComponents(
-		new ButtonBuilder()
-			.setCustomId('role-confirm')
-			.setLabel('Одобрить')
-			.setStyle(ButtonStyle.Success),
-		new ButtonBuilder()
-			.setCustomId('role-db')
-			.setLabel('Одобрить (ДБ)')
-			.setStyle(ButtonStyle.Success),
-		new ButtonBuilder()
-			.setCustomId('role-decline')
-			.setLabel('Отклонить')
-			.setStyle(ButtonStyle.Danger),
-		new ButtonBuilder()
-			.setCustomId('role-block')
-			.setLabel('Заблокировать')
-			.setStyle(ButtonStyle.Danger),
+	const now = Date.now();
+	const requestId = createRequestId();
+	const reservation = await giveRoles.insertOneIfAbsent(
+		{
+			guildId,
+			userId,
+			status: { $in: ACTIVE_REQUEST_STATUSES },
+		},
+		{
+			guildId,
+			messageId: null,
+			requestId,
+			userId,
+			nickname,
+			static: staticId,
+			status: 'creating',
+			createdAt: now,
+			updatedAt: now,
+		}
 	);
 
-	const inviteMention = `<@${inviteUserId}>`;
+	if (!reservation.inserted) {
+		return {
+			ok: false,
+			code: 'exists',
+		};
+	}
 
-	const sentMessage = await channel.send({
-		content: inviteMention,
-		embeds: [embed],
-		components: [row],
-	});
+	try {
 
-	const messageId = sentMessage.id;
+		const userPing = await client.users.fetch(userId).catch(() => null);
+		const userMention = userPing ? `${userPing}` : `<@${userId}>`;
 
-	const newGiveRoles = new giveRoles({
-		guildId,
-		messageId,
-		userId,
-		nickname,
-		static: staticId,
-		invite_nick: inviteUserId,
-	});
+		const embed = new EmbedBuilder()
+			.setColor(0x3498DB)
+			.setTitle('Заявка на выдачу ролей - НА РАССМОТРЕНИИ')
+			.setDescription(
+				`Заявка от ${userMention}. Discord ID: ${userId}.\n` +
+				`Уважаемый сотрудник Weazel News!\n` +
+				`Обратите внимание на то как записаны Имя Фамилия и статик персонажа!\n` +
+				`Проверьте данные дважды перед тем, как одобрять заявку!\n` +
+				`Пользователь оставил следующие данные:`
+			)
+			.addFields(
+				{ name: 'Имя Фамилия:', value: nickname },
+				{ name: 'Статик:', value: staticId },
+			)
+			.setTimestamp()
+			.setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
 
-	await newGiveRoles.save();
+		const row = new ActionRowBuilder().addComponents(
+			new ButtonBuilder()
+				.setCustomId('role-confirm')
+				.setLabel('Одобрить')
+				.setStyle(ButtonStyle.Success),
+			new ButtonBuilder()
+				.setCustomId('role-db')
+				.setLabel('Одобрить (ДБ)')
+				.setStyle(ButtonStyle.Success),
+			new ButtonBuilder()
+				.setCustomId('role-decline')
+				.setLabel('Отклонить')
+				.setStyle(ButtonStyle.Danger),
+			new ButtonBuilder()
+				.setCustomId('role-block')
+				.setLabel('Заблокировать')
+				.setStyle(ButtonStyle.Danger),
+		);
 
-	return { ok: true, code: 'success', inviteUserId };
+		const sentMessage = await sendMessageWithRetry(channel, {
+			embeds: [embed],
+			components: [row],
+		}, {
+			nonceSeed: `giveRoles:${guildId}:${userId}:${requestId}`,
+		});
+
+		if (!sentMessage || !sentMessage.id) {
+			throw new Error('Discord не вернул ID сообщения заявки');
+		}
+
+		const updated = await giveRoles.updateOne(
+			{ guildId, userId, status: 'creating', requestId },
+			{
+				messageId: sentMessage.id,
+				status: 'pending',
+				updatedAt: Date.now(),
+			}
+		);
+
+		if (!updated.matchedCount) {
+			throw new Error('Не удалось сохранить messageId заявки после отправки сообщения');
+		}
+
+		return { ok: true, code: 'success' };
+	} catch (error) {
+		await giveRoles.deleteOne({ guildId, userId, status: 'creating', requestId }).catch(() => {});
+		throw error;
+	}
 }
 
 module.exports.createGiveRolesRequest = createGiveRolesRequest;

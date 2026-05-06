@@ -25,6 +25,11 @@ const {
 } = require('discord.js');
 
 const logger = require('../../../utils/logger');
+const {
+	deferReplyWithRetry,
+	editReplyWithRetry,
+	sendMessageWithRetry,
+} = require('../../../utils/discordRequest');
 
 module.exports = {
 	name: 'creategr',
@@ -42,12 +47,12 @@ module.exports = {
 
 	callback: async (client, interaction) => {
 		try {
-			await interaction.deferReply({ ephemeral: true });
+			await deferReplyWithRetry(interaction, { ephemeral: true });
 
 			const guildId = interaction.guildId;
 			const serverCfg = config.servers[guildId];
 			if (!serverCfg) {
-				await interaction.editReply({
+				await editReplyWithRetry(interaction, {
 					content: 'Для этого сервера нет настроек в config.json.',
 					ephemeral: true,
 				});
@@ -57,7 +62,7 @@ module.exports = {
 			const leaderRoleId = serverCfg.leaderRoleId;
 			const channel = interaction.options.getChannel('channel');
 			if (!channel) {
-				await interaction.editReply({
+				await editReplyWithRetry(interaction, {
 					content: 'Не удалось получить канал.',
 					ephemeral: true,
 				});
@@ -78,26 +83,27 @@ module.exports = {
 				`Чтобы получить роли стажировки, нажмите кнопку ниже и заполните форму.\n` +
 				`Поля заявки:\n` +
 				`- **nickname** — Имя Фамилия персонажа (пример: Michael Lindberg)\n` +
-				`- **static** — ваш статик (пример: 7658)\n` +
-				`- **invite** — тег/ID сотрудника, который вас принимал\n\n` +
+				`- **static** — ваш статик (пример: 7658)\n\n` +
 				`Заявки, составленные не по форме, могут быть отклонены.\n\n` +
 				`Если вам нужны особенные роли (МК, лидер/зам. лидера и т.п.), обратитесь напрямую в личные сообщения лидеру WN с ролью <@&${leaderRoleId}>.\n` +
 				`Если вы новый куратор фракции, пинганите Главного Куратора гос. фракций в ${citizenChannelMention}.\n` +
 				`-# WN Helper by Michael Lindberg. Discord: milkgames`;
 
-			await channel.send({
+			await sendMessageWithRetry(channel, {
 				content: text,
 				components: [row],
+			}, {
+				nonceSeed: `createGiveRoles:${guildId}:${channel.id}`,
 			});
 
-			await interaction.editReply({
+			await editReplyWithRetry(interaction, {
 				content: `Сообщение создано успешно в канале ${channel}!`,
 				ephemeral: true,
 			});
 		} catch (error) {
 			logger.info(`Произошла ошибка при создании сообщения с выдачей ролей: ${error}`);
 			try {
-				await interaction.editReply({
+				await editReplyWithRetry(interaction, {
 					content: `Произошла ошибка при создании сообщения с выдачей ролей: ${error}`,
 					ephemeral: true,
 				});

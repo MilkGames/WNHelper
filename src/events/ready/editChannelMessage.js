@@ -18,6 +18,11 @@
 const { EmbedBuilder } = require('discord.js');
 const config = require('../../../config.json');
 
+const {
+	editMessageWithRetry,
+	runDiscordRequest,
+	sendMessageWithRetry,
+} = require('../../utils/discordRequest');
 const logger = require('../../utils/logger');
 
 function getMembers(members, max){
@@ -26,7 +31,7 @@ function getMembers(members, max){
 
     let memberPings = list.map(member => `> <@${member.user.id}>`).join('\n');
     if ((max || 0) === 0 && !memberPings) {
-        memberPings += "> Отсутствует.";
+        memberPings += "> Отсутствует(-ют).";
     }
     for (let i = size; i < (max || 0); i++) {
         memberPings += "\n> Место вакантно.";
@@ -35,6 +40,20 @@ function getMembers(members, max){
         memberPings = memberPings.slice(0, 1000) + "\n... (список обрезан)";
     }
     return memberPings;
+}
+
+async function upsertDepartmentMessage(channel, embed, nonceSeed) {
+    const existingMessage = await runDiscordRequest(async () => {
+        const messages = await channel.messages.fetch({ limit: 1 });
+        return messages.first() || null;
+    });
+
+    if (existingMessage) {
+        await editMessageWithRetry(existingMessage, { embeds: [embed] });
+        return;
+    }
+
+    await sendMessageWithRetry(channel, { embeds: [embed] }, { nonceSeed });
 }
 
 module.exports = async (client) => {
@@ -102,42 +121,42 @@ module.exports = async (client) => {
                     }
 
                     // проход по кураторам
-                    RDDCurators = members.filter(member => 
+                    const RDDCurators = members.filter(member => 
                         member.roles.cache.has(headRDDRoleId) &&
                         (member.roles.cache.has(depLeaderRoleId) ||
                         member.roles.cache.has(leaderRoleId)));
-                    AMDCurators = members.filter(member => 
+                    const AMDCurators = members.filter(member => 
                         member.roles.cache.has(headAMDRoleId) &&
                         (member.roles.cache.has(depLeaderRoleId) ||
                         member.roles.cache.has(leaderRoleId)));
-                    EDCurators = members.filter(member => 
+                    const EDCurators = members.filter(member => 
                         member.roles.cache.has(headEDRoleId) &&
                         (member.roles.cache.has(depLeaderRoleId) ||
                         member.roles.cache.has(leaderRoleId)));
-                    JDCurators = members.filter(member => 
+                    const JDCurators = members.filter(member => 
                         member.roles.cache.has(headJDRoleId) &&
                         (member.roles.cache.has(depLeaderRoleId) ||
                         member.roles.cache.has(leaderRoleId)));
 
-                    rddEmbed.addFields({ name: "Следящий за отделом:", value: getMembers(RDDCurators, 0) });
-                    amdEmbed.addFields({ name: "Следящий за отделом:", value: getMembers(AMDCurators, 0) });
-                    edEmbed.addFields({ name: "Следящий за отделом:", value: getMembers(EDCurators, 0) });
-                    jdEmbed.addFields({ name: "Следящий за отделом:", value: getMembers(JDCurators, 0) });
+                    rddEmbed.addFields({ name: "Куратор отдела:", value: getMembers(RDDCurators, 0) });
+                    amdEmbed.addFields({ name: "Куратор отдела:", value: getMembers(AMDCurators, 0) });
+                    edEmbed.addFields({ name: "Куратор отдела:", value: getMembers(EDCurators, 0) });
+                    jdEmbed.addFields({ name: "Куратор отдела:", value: getMembers(JDCurators, 0) });
 
                     // проход по хэдам
-                    RDDHead = members.filter(member => 
+                    const RDDHead = members.filter(member => 
                         member.roles.cache.has(headRDDRoleId) &&
                         !member.roles.cache.has(depLeaderRoleId) &&
                         !member.roles.cache.has(leaderRoleId));
-                    AMDHead = members.filter(member => 
+                    const AMDHead = members.filter(member => 
                         member.roles.cache.has(headAMDRoleId) &&
                         !member.roles.cache.has(depLeaderRoleId) &&
                         !member.roles.cache.has(leaderRoleId));
-                    EDHead = members.filter(member => 
+                    const EDHead = members.filter(member => 
                         member.roles.cache.has(headEDRoleId) &&
                         !member.roles.cache.has(depLeaderRoleId) &&
                         !member.roles.cache.has(leaderRoleId));
-                    JDHead = members.filter(member => 
+                    const JDHead = members.filter(member => 
                         member.roles.cache.has(headJDRoleId) &&
                         !member.roles.cache.has(depLeaderRoleId) &&
                         !member.roles.cache.has(leaderRoleId));
@@ -157,10 +176,10 @@ module.exports = async (client) => {
 
                     // проход по депам
 
-                    RDDDepHead = members.filter(member => member.roles.cache.has(depHeadRDDRoleId));
-                    AMDDepHead = members.filter(member => member.roles.cache.has(depHeadAMDRoleId));
-                    EDDepHead = members.filter(member => member.roles.cache.has(depHeadEDRoleId));
-                    JDDepHead = members.filter(member => member.roles.cache.has(depHeadJDRoleId));
+                    const RDDDepHead = members.filter(member => member.roles.cache.has(depHeadRDDRoleId));
+                    const AMDDepHead = members.filter(member => member.roles.cache.has(depHeadAMDRoleId));
+                    const EDDepHead = members.filter(member => member.roles.cache.has(depHeadEDRoleId));
+                    const JDDepHead = members.filter(member => member.roles.cache.has(depHeadJDRoleId));
 
                     rddEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(RDDDepHead, 2) });
                     amdEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(AMDDepHead, 2) });
@@ -169,22 +188,22 @@ module.exports = async (client) => {
 
                     // основной состав
 
-                    RDD = members.filter(member => 
+                    const RDD = members.filter(member => 
                         member.roles.cache.has(RDDRoleId) &&
                         !member.roles.cache.has(headRDDRoleId) &&
                         !(depHeadRDDRoleId && member.roles.cache.has(depHeadRDDRoleId)) &&
                         !member.roles.cache.has(traineeRoleId));
-                    AMD = members.filter(member => 
+                    const AMD = members.filter(member => 
                         member.roles.cache.has(AMDRoleId) &&
                         !member.roles.cache.has(headAMDRoleId) &&
                         !member.roles.cache.has(depHeadAMDRoleId) &&
                         !member.roles.cache.has(traineeRoleId));
-                    ED = members.filter(member => 
+                    const ED = members.filter(member => 
                         member.roles.cache.has(EDRoleId) &&
                         !member.roles.cache.has(headEDRoleId) &&
                         !member.roles.cache.has(depHeadEDRoleId) &&
                         !member.roles.cache.has(traineeRoleId));
-                    JD = members.filter(member => 
+                    const JD = members.filter(member => 
                         member.roles.cache.has(JDRoleId) &&
                         !member.roles.cache.has(headJDRoleId) &&
                         !member.roles.cache.has(depHeadJDRoleId) &&
@@ -205,10 +224,10 @@ module.exports = async (client) => {
 
                     // подработка
                     
-                    RDpart = members.filter(member => member.roles.cache.has(partWorkRDDRoleId));
-                    AMDpart = members.filter(member => member.roles.cache.has(partWorkAMDRoleId));
-                    EDpart = members.filter(member => member.roles.cache.has(partWorkEDRoleId));
-                    JDpart = members.filter(member => member.roles.cache.has(partWorkJDRoleId));
+                    const RDpart = members.filter(member => member.roles.cache.has(partWorkRDDRoleId));
+                    const AMDpart = members.filter(member => member.roles.cache.has(partWorkAMDRoleId));
+                    const EDpart = members.filter(member => member.roles.cache.has(partWorkEDRoleId));
+                    const JDpart = members.filter(member => member.roles.cache.has(partWorkJDRoleId));
 
                     rddEmbed.addFields(
                         { name: "**\nСотрудники при подработке:\n**", value: " " },
@@ -227,22 +246,19 @@ module.exports = async (client) => {
                         { name: " ", value: getMembers(JDpart, 0) },
                         { name: " ", value: "-# Информация обновляется каждый час." });
                     
-                    let rddMessage = (await rddChannel.messages.fetch()).first();
-                    let amdMessage = (await amdChannel.messages.fetch()).first();
-                    let edMessage = (await edChannel.messages.fetch()).first();
-                    let jdMessage = (await jdChannel.messages.fetch()).first();
-
-                    if (rddMessage) rddMessage.edit({ embeds: [rddEmbed] });
-                    else rddChannel.send({ embeds: [rddEmbed] });
-                    if (amdMessage) amdMessage.edit({ embeds: [amdEmbed] });
-                    else amdChannel.send({ embeds: [amdEmbed] });
-                    if (edMessage) edMessage.edit({ embeds: [edEmbed] });
-                    else edChannel.send({ embeds: [edEmbed] });
-                    if (jdMessage) jdMessage.edit({ embeds: [jdEmbed] });
-                    else jdChannel.send({ embeds: [jdEmbed] });
+                    await Promise.all([
+                        upsertDepartmentMessage(rddChannel, rddEmbed, `dept:${serverId}:rdd`),
+                        upsertDepartmentMessage(amdChannel, amdEmbed, `dept:${serverId}:amd`),
+                        upsertDepartmentMessage(edChannel, edEmbed, `dept:${serverId}:ed`),
+                        upsertDepartmentMessage(jdChannel, jdEmbed, `dept:${serverId}:jd`),
+                    ]);
                 };
-                editChannelMessage();
-                setInterval(editChannelMessage, 3600000);
+                await editChannelMessage();
+                setInterval(() => {
+                    editChannelMessage().catch((error) => {
+                        logger.info(`Произошла ошибка при обновлении сообщения в канале: ${error}`);
+                    });
+                }, 3600000);
             }
         }
     } catch (error) {

@@ -16,6 +16,10 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 const { PermissionFlagsBits } = require('discord.js');
+const {
+    deferReplyWithRetry,
+    editReplyWithRetry,
+} = require('../../utils/discordRequest');
 
 module.exports = {
     name: 'ping',
@@ -26,13 +30,13 @@ module.exports = {
     //deleted: Boolean
     permissionsRequired: [PermissionFlagsBits.Administrator],
     callback: async (client, interaction) => {
-        await interaction.deferReply();
+        await deferReplyWithRetry(interaction);
 
         const reply = await interaction.fetchReply();
 
         const ping = reply.createdTimestamp - interaction.createdTimestamp;
 
-        await interaction.editReply({
+        await editReplyWithRetry(interaction, {
             content: `Pong! Client ${ping} ms | Websocket: ${client.ws.ping} ms.`,
             ephemeral: true,
         });

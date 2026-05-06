@@ -17,6 +17,12 @@
 */
 const rankCommand = require('../../commands/wn/ka/rank');
 const uvalCommand = require('../../commands/wn/ka/uval');
+const {
+	deferReplyWithRetry,
+	editReplyWithRetry,
+	replyWithRetry,
+	deleteReplyWithRetry,
+} = require('../../utils/discordRequest');
 const logger = require('../../utils/logger');
 
 function extractDiscordId(value) {
@@ -124,8 +130,12 @@ function buildMockInteraction(baseInteraction, payload) {
 		channel: baseInteraction.channel,
 		channelId: baseInteraction.channelId,
 
-		deferred: state.deferred,
-		replied: state.replied,
+		get deferred() {
+			return state.deferred;
+		},
+		get replied() {
+			return state.replied;
+		},
 
 		options: {
 			getString: (name /*, required */) => {
@@ -141,19 +151,19 @@ function buildMockInteraction(baseInteraction, payload) {
 		},
 
 		deferReply: async (opts) => {
-			await baseInteraction.deferReply(opts);
+			await deferReplyWithRetry(baseInteraction, opts);
 			state.deferred = true;
 		},
 		editReply: async (opts) => {
-			await baseInteraction.editReply(opts);
+			await editReplyWithRetry(baseInteraction, opts);
 			state.replied = true;
 		},
 		reply: async (opts) => {
-			await baseInteraction.reply(opts);
+			await replyWithRetry(baseInteraction, opts);
 			state.replied = true;
 		},
 		deleteReply: async () => {
-			await baseInteraction.deleteReply();
+			await deleteReplyWithRetry(baseInteraction);
 		},
 	};
 }
@@ -167,9 +177,9 @@ module.exports = async (client, interaction) => {
 
 		const commandName = interaction.commandName;
 
-		// Базовая валидация embed
+		// базовая валидация embed
 		if (!targetMessage.embeds?.length) {
-			await interaction.reply({
+			await replyWithRetry(interaction, {
 				content: 'В сообщении нет embed-данных. Контекстная команда работает только на нужных отчётах/заявлениях.',
 				ephemeral: true,
 			});
@@ -178,7 +188,7 @@ module.exports = async (client, interaction) => {
 
 		const memberId = extractMemberIdFromMessage(targetMessage);
 		if (!memberId) {
-			await interaction.reply({
+			await replyWithRetry(interaction, {
 				content: 'Не смог найти Discord ID сотрудника в embed. Проверь структуру сообщения (поля/формат).',
 				ephemeral: true,
 			});
@@ -191,7 +201,7 @@ module.exports = async (client, interaction) => {
 		if (commandName === 'Повысить по отчёту') {
 			const targetRank = extractTargetRankFromMessage(targetMessage);
 			if (!targetRank || targetRank < 1 || targetRank > 8) {
-				await interaction.reply({
+				await replyWithRetry(interaction, {
 					content: 'Не смог определить целевой ранг (ожидаю число 1–8 в embed). Проверь поле ранга в сообщении.',
 					ephemeral: true,
 				});
@@ -199,8 +209,8 @@ module.exports = async (client, interaction) => {
 			}
 
 			if (targetRank <= 1) {
-                // Такого быть не может, но кто его знает!!!
-				await interaction.reply({
+                // такого быть не может, но кто его знает!!!
+				await replyWithRetry(interaction, {
 					content: 'Целевой ранг должен быть >= 2, иначе не получится сформировать "Повышен X-Y".',
 					ephemeral: true,
 				});
@@ -215,7 +225,7 @@ module.exports = async (client, interaction) => {
 				member: memberMention,
 				action,
 				reason,
-				static: null, // пусть rank.js пытается взять из ника; если не сможет — сам попросит, его проблемы, лол
+				static: null, // пусть rank.js пытается взять из ника; если не сможет - сам попросит, его проблемы, лол
 			});
 
 			await rankCommand.callback(client, mockInteraction);
@@ -236,7 +246,7 @@ module.exports = async (client, interaction) => {
 				guildId: targetMessage.guildId,
 				member: memberMention,
 				reason,
-				static: null, // пусть uval.js пытается взять из ника; если не сможет — сам попросит, его проблемы, лол
+				static: null, // пусть uval.js пытается взять из ника; если не сможет - сам попросит, его проблемы, лол
 			});
 
 			await uvalCommand.callback(client, mockInteraction);
@@ -254,12 +264,12 @@ module.exports = async (client, interaction) => {
 
 		try {
 			if (!interaction.replied && !interaction.deferred) {
-				await interaction.reply({
+				await replyWithRetry(interaction, {
 					content: `Ошибка контекстной команды: ${error}`,
 					ephemeral: true,
 				});
 			} else {
-				await interaction.editReply({
+				await editReplyWithRetry(interaction, {
 					content: `Ошибка контекстной команды: ${error}`,
 					ephemeral: true,
 				});

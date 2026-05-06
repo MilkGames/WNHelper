@@ -17,6 +17,11 @@
 */
 const { PermissionFlagsBits } = require('discord.js');
 const config = require('../../../config.json');
+const {
+    deferReplyWithRetry,
+    editReplyWithRetry,
+    followUpWithRetry,
+} = require('../../utils/discordRequest');
 
 function formatValue(key, value) {
     if (!value) return '—';
@@ -31,13 +36,13 @@ module.exports = {
     permissionsRequired: [PermissionFlagsBits.Administrator],
 
     callback: async (client, interaction) => {
-        await interaction.deferReply({ ephemeral: true });
+        await deferReplyWithRetry(interaction, { ephemeral: true });
 
         const guildId = interaction.guildId;
         const serverConfig = config.servers[guildId];
 
         if (!serverConfig) {
-            await interaction.editReply({
+            await editReplyWithRetry(interaction, {
                 content: 'Для этого сервера нет записи в config.json.',
                 ephemeral: true,
             });
@@ -72,14 +77,14 @@ module.exports = {
 
         // первая часть идет в ответ, остальные — followUp
         const firstContent = `${header}\n${chunks[0]}\n`;
-        await interaction.editReply({
+        await editReplyWithRetry(interaction, {
             content: firstContent,
             ephemeral: true,
         });
 
         for (let i = 1; i < chunks.length; i++) {
             const content = `Продолжение конфига (${i + 1}/${chunks.length}):\n\n${chunks[i]}\n`;
-            await interaction.followUp({
+            await followUpWithRetry(interaction, {
                 content,
                 ephemeral: true,
             });
