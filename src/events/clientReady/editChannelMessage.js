@@ -1,0 +1,267 @@
+/*
+ * WN Helper Discord Bot
+ * Copyright (C) 2025 MilkGames
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+const { EmbedBuilder } = require('discord.js');
+const config = require('../../../config.json');
+
+const {
+	editMessageWithRetry,
+	runDiscordRequest,
+	sendMessageWithRetry,
+} = require('../../utils/discordRequest');
+const logger = require('../../utils/logger');
+
+function getMembers(members, max){
+    const list = Array.from(members?.values ? members.values() : members || []);
+    const size = list.length;
+
+    let memberPings = list.map(member => `> <@${member.user.id}>`).join('\n');
+    if ((max || 0) === 0 && !memberPings) {
+        memberPings += "> Отсутствует(-ют).";
+    }
+    for (let i = size; i < (max || 0); i++) {
+        memberPings += "\n> Место вакантно.";
+    }
+    if (memberPings.length > 1000) {
+        memberPings = memberPings.slice(0, 1000) + "\n... (список обрезан)";
+    }
+    return memberPings;
+}
+
+async function upsertDepartmentMessage(channel, embed, nonceSeed) {
+    const existingMessage = await runDiscordRequest(async () => {
+        const messages = await channel.messages.fetch({ limit: 1 });
+        return messages.first() || null;
+    });
+
+    if (existingMessage) {
+        await editMessageWithRetry(existingMessage, { embeds: [embed] });
+        return;
+    }
+
+    await sendMessageWithRetry(channel, { embeds: [embed] }, { nonceSeed });
+}
+
+module.exports = async (client) => {
+    try {
+        for (const serverId of Object.keys(config.servers)){
+            const rddChannelId = config.servers[serverId].RDDStaffChannelId;
+            const amdChannelId = config.servers[serverId].AMDStaffChannelId;
+            const edChannelId = config.servers[serverId].EDStaffChannelId;
+            const jdChannelId = config.servers[serverId].JDStaffChannelId;
+            const RDDRoleId = config.servers[serverId].RDDRoleId;
+            const AMDRoleId = config.servers[serverId].AMDRoleId;
+            const EDRoleId = config.servers[serverId].EDRoleId;
+            const JDRoleId = config.servers[serverId].JDRoleId;
+            const partWorkRDDRoleId = config.servers[serverId].partWorkRDDRoleId;
+            const partWorkAMDRoleId = config.servers[serverId].partWorkAMDRoleId;
+            const partWorkEDRoleId = config.servers[serverId].partWorkEDRoleId;
+            const partWorkJDRoleId = config.servers[serverId].partWorkJDRoleId;
+            const depHeadRDDRoleId = config.servers[serverId].depHeadRDDRoleId;
+            const depHeadAMDRoleId = config.servers[serverId].depHeadAMDRoleId;
+            const depHeadEDRoleId = config.servers[serverId].depHeadEDRoleId;
+            const depHeadJDRoleId = config.servers[serverId].depHeadJDRoleId;
+            const headRDDRoleId = config.servers[serverId].headRDDRoleId;
+            const headAMDRoleId = config.servers[serverId].headAMDRoleId;
+            const headEDRoleId = config.servers[serverId].headEDRoleId;
+            const headJDRoleId = config.servers[serverId].headJDRoleId;
+            const depLeaderRoleId = config.servers[serverId].depLeaderRoleId;
+            const leaderRoleId = config.servers[serverId].leaderRoleId;
+            const traineeRoleId = config.servers[serverId].traineeRoleId;
+            if (rddChannelId && amdChannelId && edChannelId && jdChannelId) {
+                const guild = client.guilds.cache.get(serverId);
+                const rddChannel = await client.channels.fetch(rddChannelId);
+                const amdChannel = await client.channels.fetch(amdChannelId);
+                const edChannel = await client.channels.fetch(edChannelId);
+                const jdChannel = await client.channels.fetch(jdChannelId);
+                let members;
+        
+                const editChannelMessage = async () => {
+                    // создание embeds
+                    const rddEmbed = new EmbedBuilder()
+                        .setColor(0x2ECC71)
+                        .setTitle(`Состав отдела Recruitment & Disciplinary Department`)
+                        .setTimestamp()
+                        .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+                    const amdEmbed = new EmbedBuilder()
+                        .setColor(0xE67E22)
+                        .setTitle(`Состав отдела Advertising Management Department`)
+                        .setTimestamp()
+                        .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+                    const edEmbed = new EmbedBuilder()
+                        .setColor(0xFFC0CB)
+                        .setTitle(`Состав отдела Event Department`)
+                        .setTimestamp()
+                        .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+                    const jdEmbed = new EmbedBuilder()
+                        .setColor(0x3498DB)
+                        .setTitle(`Состав отдела Journalism Department`)
+                        .setTimestamp()
+                        .setFooter({ text: 'WN Helper by Michael Lindberg. Discord: milkgames', iconURL: 'https://i.imgur.com/zdxWb0s.jpeg' });
+                
+                    let members;
+                    try {
+                        members = await guild.members.fetch({ time: 20000, withPresences: false });
+                    } catch (err) {
+                        members = guild.members.cache;
+                    }
+
+                    // проход по кураторам
+                    const RDDCurators = members.filter(member => 
+                        member.roles.cache.has(headRDDRoleId) &&
+                        (member.roles.cache.has(depLeaderRoleId) ||
+                        member.roles.cache.has(leaderRoleId)));
+                    const AMDCurators = members.filter(member => 
+                        member.roles.cache.has(headAMDRoleId) &&
+                        (member.roles.cache.has(depLeaderRoleId) ||
+                        member.roles.cache.has(leaderRoleId)));
+                    const EDCurators = members.filter(member => 
+                        member.roles.cache.has(headEDRoleId) &&
+                        (member.roles.cache.has(depLeaderRoleId) ||
+                        member.roles.cache.has(leaderRoleId)));
+                    const JDCurators = members.filter(member => 
+                        member.roles.cache.has(headJDRoleId) &&
+                        (member.roles.cache.has(depLeaderRoleId) ||
+                        member.roles.cache.has(leaderRoleId)));
+
+                    rddEmbed.addFields({ name: "Куратор отдела:", value: getMembers(RDDCurators, 0) });
+                    amdEmbed.addFields({ name: "Куратор отдела:", value: getMembers(AMDCurators, 0) });
+                    edEmbed.addFields({ name: "Куратор отдела:", value: getMembers(EDCurators, 0) });
+                    jdEmbed.addFields({ name: "Куратор отдела:", value: getMembers(JDCurators, 0) });
+
+                    // проход по хэдам
+                    const RDDHead = members.filter(member => 
+                        member.roles.cache.has(headRDDRoleId) &&
+                        !member.roles.cache.has(depLeaderRoleId) &&
+                        !member.roles.cache.has(leaderRoleId));
+                    const AMDHead = members.filter(member => 
+                        member.roles.cache.has(headAMDRoleId) &&
+                        !member.roles.cache.has(depLeaderRoleId) &&
+                        !member.roles.cache.has(leaderRoleId));
+                    const EDHead = members.filter(member => 
+                        member.roles.cache.has(headEDRoleId) &&
+                        !member.roles.cache.has(depLeaderRoleId) &&
+                        !member.roles.cache.has(leaderRoleId));
+                    const JDHead = members.filter(member => 
+                        member.roles.cache.has(headJDRoleId) &&
+                        !member.roles.cache.has(depLeaderRoleId) &&
+                        !member.roles.cache.has(leaderRoleId));
+
+                    rddEmbed.addFields(
+                        { name: "**\nСтарший состав:\n**", value: " " },
+                        { name: "Глава отдела:", value: getMembers(RDDHead, 1) });
+                    amdEmbed.addFields(
+                        { name: "**\nСтарший состав:\n**", value: " " },
+                        { name: "Глава отдела:", value: getMembers(AMDHead, 1) });
+                    edEmbed.addFields(
+                        { name: "**\nСтарший состав:\n**", value: " " },
+                        { name: "Глава отдела:", value: getMembers(EDHead, 1) });
+                    jdEmbed.addFields(
+                        { name: "**\nСтарший состав:\n**", value: " " },
+                        { name: "Глава отдела:", value: getMembers(JDHead, 1) });
+
+                    // проход по депам
+
+                    const RDDDepHead = members.filter(member => member.roles.cache.has(depHeadRDDRoleId));
+                    const AMDDepHead = members.filter(member => member.roles.cache.has(depHeadAMDRoleId));
+                    const EDDepHead = members.filter(member => member.roles.cache.has(depHeadEDRoleId));
+                    const JDDepHead = members.filter(member => member.roles.cache.has(depHeadJDRoleId));
+
+                    rddEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(RDDDepHead, 2) });
+                    amdEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(AMDDepHead, 2) });
+                    edEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(EDDepHead, 2) });
+                    jdEmbed.addFields({ name: "Заместители главы отдела:", value: getMembers(JDDepHead, 2) });
+
+                    // основной состав
+
+                    const RDD = members.filter(member => 
+                        member.roles.cache.has(RDDRoleId) &&
+                        !member.roles.cache.has(headRDDRoleId) &&
+                        !(depHeadRDDRoleId && member.roles.cache.has(depHeadRDDRoleId)) &&
+                        !member.roles.cache.has(traineeRoleId));
+                    const AMD = members.filter(member => 
+                        member.roles.cache.has(AMDRoleId) &&
+                        !member.roles.cache.has(headAMDRoleId) &&
+                        !member.roles.cache.has(depHeadAMDRoleId) &&
+                        !member.roles.cache.has(traineeRoleId));
+                    const ED = members.filter(member => 
+                        member.roles.cache.has(EDRoleId) &&
+                        !member.roles.cache.has(headEDRoleId) &&
+                        !member.roles.cache.has(depHeadEDRoleId) &&
+                        !member.roles.cache.has(traineeRoleId));
+                    const JD = members.filter(member => 
+                        member.roles.cache.has(JDRoleId) &&
+                        !member.roles.cache.has(headJDRoleId) &&
+                        !member.roles.cache.has(depHeadJDRoleId) &&
+                        !member.roles.cache.has(traineeRoleId));
+
+                    rddEmbed.addFields(
+                        { name: "**\nОсновной состав:\n**", value: " " },
+                        { name: " ", value: getMembers(RDD, 0) });
+                    amdEmbed.addFields(
+                        { name: "**\nОсновной состав:\n**", value: " " },
+                        { name: " ", value: getMembers(AMD, 0) });
+                    edEmbed.addFields(
+                        { name: "**\nОсновной состав:\n**", value: " " },
+                        { name: " ", value: getMembers(ED, 0) });
+                    jdEmbed.addFields(
+                        { name: "**\nОсновной состав:\n**", value: " " },
+                        { name: " ", value: getMembers(JD, 0) });
+
+                    // подработка
+                    
+                    const RDpart = members.filter(member => member.roles.cache.has(partWorkRDDRoleId));
+                    const AMDpart = members.filter(member => member.roles.cache.has(partWorkAMDRoleId));
+                    const EDpart = members.filter(member => member.roles.cache.has(partWorkEDRoleId));
+                    const JDpart = members.filter(member => member.roles.cache.has(partWorkJDRoleId));
+
+                    rddEmbed.addFields(
+                        { name: "**\nСотрудники при подработке:\n**", value: " " },
+                        { name: " ", value: getMembers(RDpart, 0) },
+                        { name: " ", value: "-# Информация обновляется каждый час." });
+                    amdEmbed.addFields(
+                        { name: "**\nСотрудники при подработке:\n**", value: " " },
+                        { name: " ", value: getMembers(AMDpart, 0) },
+                        { name: " ", value: "-# Информация обновляется каждый час." });
+                    edEmbed.addFields(
+                        { name: "**\nСотрудники при подработке:\n**", value: " " },
+                        { name: " ", value: getMembers(EDpart, 0) },
+                        { name: " ", value: "-# Информация обновляется каждый час." });
+                    jdEmbed.addFields(
+                        { name: "**\nСотрудники при подработке:\n**", value: " " },
+                        { name: " ", value: getMembers(JDpart, 0) },
+                        { name: " ", value: "-# Информация обновляется каждый час." });
+                    
+                    await Promise.all([
+                        upsertDepartmentMessage(rddChannel, rddEmbed, `dept:${serverId}:rdd`),
+                        upsertDepartmentMessage(amdChannel, amdEmbed, `dept:${serverId}:amd`),
+                        upsertDepartmentMessage(edChannel, edEmbed, `dept:${serverId}:ed`),
+                        upsertDepartmentMessage(jdChannel, jdEmbed, `dept:${serverId}:jd`),
+                    ]);
+                };
+                await editChannelMessage();
+                setInterval(() => {
+                    editChannelMessage().catch((error) => {
+                        logger.info(`Произошла ошибка при обновлении сообщения в канале: ${error}`);
+                    });
+                }, 3600000);
+            }
+        }
+    } catch (error) {
+        logger.info(`Произошла ошибка при обновлении сообщения в канале: ${error}`);
+    }
+}
