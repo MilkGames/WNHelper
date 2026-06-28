@@ -60,6 +60,7 @@
         {
             "_serverName": "WN Dallas",
             "leaderRoleId": "1249711898820214809",
+            "leaderAppointmentDate": "2026-06-26",
             "depLeaderRoleId": "1249711898820214808",
             "citizenChannelId": "1249711899122339867",
             "WNLegendRoleId": "1486785623451762779",
@@ -101,6 +102,7 @@
             "depHeadJDRoleId": "1424151580160033001",
             "headJDRoleId": "1294779362557821008",
             "JDStaffChannelId": "1249711901563289635",
+            "highStaffChannelId": "1520136428384686210",
             "WNroleNumberChannelId": "1451566448832155768",
             "membersChannelId": "1451566321430171769",
             "examinerRoleId": "1424348257458323549",

@@ -29,6 +29,7 @@ const {
     FREE_SHIFT_VALUE,
     SHIFT_MAP,
     ACCESS_STAGE_MINUTES,
+    ACCESS_MAX_STAGE,
     getMoscowDateKey,
     daysBetween,
     buildShiftLines,
@@ -92,7 +93,7 @@ async function getRotationIndexForToday(guildId) {
 
     const diff = Math.max(0, daysBetween(lastKey, todayKey));
     const current = typeof state.rotationIndex === 'number' ? state.rotationIndex : 0;
-    const next = (current + diff) % 3;
+    const next = (current + diff) % 4;
     await amdShiftRotation.updateOne({ guildId }, { rotationIndex: next, lastRunDate: todayKey });
     return next;
 }
@@ -123,7 +124,10 @@ async function scheduleAccessNotifications({
 }) {
     const plan = buildAccessPlan(serverConfig, rotationIndex);
     const stageRoleIds = plan.stages;
-    const stageDelays = [ACCESS_STAGE_MINUTES, ACCESS_STAGE_MINUTES * 2];
+    const stageDelays = Array.from(
+        { length: ACCESS_MAX_STAGE },
+        (_, index) => ACCESS_STAGE_MINUTES * (index + 1)
+    );
 
     for (let i = 0; i < stageDelays.length; i += 1) {
         const stageIdx = i + 1;

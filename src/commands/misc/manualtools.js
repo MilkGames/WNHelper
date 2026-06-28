@@ -15,6 +15,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+const fs = require('fs/promises');
+const path = require('path');
 const { ApplicationCommandOptionType, PermissionFlagsBits } = require('discord.js');
 const config = require('../../../config.json');
 
@@ -26,9 +28,34 @@ const {
     editReplyWithRetry,
 } = require('../../utils/discordRequest');
 const logger = require('../../utils/logger');
+const { updateAllServerMessages } = require('../../events/clientReady/editChannelMessage');
+
+const CONFIG_PATH = path.join(__dirname, '../../../config.json');
 
 function normalizeUserId(input) {
     return String(input || '').replace(/[<@!>]/g, '').trim();
+}
+
+function normalizeLeaderAppointmentDate(input) {
+    const value = String(input || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+
+    const [year, month, day] = value.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+
+    if (
+        date.getUTCFullYear() !== year ||
+        date.getUTCMonth() !== month - 1 ||
+        date.getUTCDate() !== day
+    ) {
+        return null;
+    }
+
+    return value;
+}
+
+async function saveConfig() {
+    await fs.writeFile(CONFIG_PATH, `${JSON.stringify(config, null, 4)}\n`, 'utf8');
 }
 
 module.exports = {
@@ -66,6 +93,19 @@ module.exports = {
             name: 'send_amd',
             description: 'Ручная отправка AMD-смен на текущий сервер.',
             type: ApplicationCommandOptionType.Subcommand,
+        },
+        {
+            name: 'set_leader_date',
+            description: 'Изменить дату назначения лидера фракции.',
+            type: ApplicationCommandOptionType.Subcommand,
+            options: [
+                {
+                    name: 'date',
+                    description: 'Дата назначения в формате YYYY-MM-DD.',
+                    type: ApplicationCommandOptionType.String,
+                    required: true,
+                },
+            ],
         },
     ],
 
@@ -165,6 +205,40 @@ module.exports = {
                     content: `AMD-смены отправлены вручную. Сообщение: ${result.messageLink}`,
                     ephemeral: true,
                 });
+                return;
+            }
+
+            if (subcommand === 'set_leader_date') {
+                const serverConfig = config.servers[guildId];
+                if (!serverConfig) {
+                    await editReplyWithRetry(interaction, {
+                        content: 'Для этого сервера нет настроек в config.json.',
+                        ephemeral: true,
+                    });
+                    return;
+                }
+
+                const appointmentDate = normalizeLeaderAppointmentDate(interaction.options.getString('date', true));
+                if (!appointmentDate) {
+                    await editReplyWithRetry(interaction, {
+                        content: 'Укажите дату назначения в формате YYYY-MM-DD, например 2026-06-28.',
+                        ephemeral: true,
+                    });
+                    return;
+                }
+
+                serverConfig.leaderAppointmentDate = appointmentDate;
+                await saveConfig();
+
+                logger.info(`Ручные инструменты: дата назначения лидера для guildId=${guildId} изменена на ${appointmentDate}`);
+
+                await editReplyWithRetry(interaction, {
+                    content: `Дата назначения лидера изменена на ${appointmentDate}.`,
+                    ephemeral: true,
+                });
+
+                await updateAllServerMessages(client, false);
+
                 return;
             }
 

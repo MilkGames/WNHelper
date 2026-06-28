@@ -194,10 +194,10 @@ module.exports = async (client, interaction) => {
 			}
 
 			const alreadyTaken = countUserShifts(shiftsRecord, userId);
-			if (alreadyTaken >= 2) {
+			if (alreadyTaken >= 1) {
 				await replyAndAutoDelete(
 					interaction,
-					'Ты уже занял максимальное количество смен на сегодня (2). Сначала освободи одну из смен, чтобы занять новую.'
+					'Ты уже занял максимальное количество смен на сегодня (1). Сначала освободи свою смену, чтобы занять новую.'
 				);
 				return;
 			}

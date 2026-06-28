@@ -20,23 +20,23 @@ const logger = require('./logger');
 const FREE_SHIFT_VALUE = 'Свободно';
 
 const SHIFT_MAP = [
-    { id: 'shift-1', field: 'firstHour', number: 1, time: '10:00 - 10:55' },
-    { id: 'shift-2', field: 'secondHour', number: 2, time: '11:00 - 11:55' },
-    { id: 'shift-3', field: 'thirdHour', number: 3, time: '12:00 - 12:55' },
-    { id: 'shift-4', field: 'fourthHour', number: 4, time: '13:00 - 13:55' },
-    { id: 'shift-5', field: 'fifthHour', number: 5, time: '14:00 - 14:55' },
-    { id: 'shift-6', field: 'sixthHour', number: 6, time: '15:00 - 15:55' },
-    { id: 'shift-7', field: 'seventhHour', number: 7, time: '16:00 - 16:55' },
-    { id: 'shift-8', field: 'eighthHour', number: 8, time: '17:00 - 17:55' },
-    { id: 'shift-9', field: 'ninthHour', number: 9, time: '18:00 - 18:55' },
-    { id: 'shift-10', field: 'tenthHour', number: 10, time: '19:00 - 19:55' },
-    { id: 'shift-11', field: 'eleventhHour', number: 11, time: '20:00 - 20:55' },
-    { id: 'shift-12', field: 'twelfthHour', number: 12, time: '21:00 - 21:55' },
-    { id: 'shift-13', field: 'thirteenthHour', number: 13, time: '22:00 - 22:55' },
+    { id: 'shift-1', field: 'firstHour', number: 1, time: '10:00 - 10:59' },
+    { id: 'shift-2', field: 'secondHour', number: 2, time: '11:00 - 11:59' },
+    { id: 'shift-3', field: 'thirdHour', number: 3, time: '12:00 - 12:59' },
+    { id: 'shift-4', field: 'fourthHour', number: 4, time: '13:00 - 13:59' },
+    { id: 'shift-5', field: 'fifthHour', number: 5, time: '14:00 - 14:59' },
+    { id: 'shift-6', field: 'sixthHour', number: 6, time: '15:00 - 15:59' },
+    { id: 'shift-7', field: 'seventhHour', number: 7, time: '16:00 - 16:59' },
+    { id: 'shift-8', field: 'eighthHour', number: 8, time: '17:00 - 17:59' },
+    { id: 'shift-9', field: 'ninthHour', number: 9, time: '18:00 - 18:59' },
+    { id: 'shift-10', field: 'tenthHour', number: 10, time: '19:00 - 19:59' },
+    { id: 'shift-11', field: 'eleventhHour', number: 11, time: '20:00 - 20:59' },
+    { id: 'shift-12', field: 'twelfthHour', number: 12, time: '21:00 - 21:59' },
+    { id: 'shift-13', field: 'thirteenthHour', number: 13, time: '22:00 - 22:59' },
 ];
 
 const ACCESS_STAGE_MINUTES = 10;
-const ACCESS_MAX_STAGE = 2;
+const ACCESS_MAX_STAGE = 3;
 
 function uniqRoleIds(roleIds) {
     return Array.from(new Set((roleIds || []).filter(Boolean)));
@@ -67,76 +67,45 @@ function daysBetween(dateKeyA, dateKeyB) {
 }
 
 function buildRoleGroups(serverConfig = {}) {
-    const main = uniqRoleIds([serverConfig.AMDRoleId]);
-    const high = uniqRoleIds([serverConfig.depHeadAMDRoleId, serverConfig.headAMDRoleId]);
-    const part = uniqRoleIds([serverConfig.partWorkAMDRoleId]);
-
-    const safeMain = main.length ? main : uniqRoleIds([serverConfig.headAMDRoleId, serverConfig.depHeadAMDRoleId]);
-    const safeHigh = high.length ? high : safeMain;
-    const safePart = part.length ? part : safeMain;
-
     return {
-        main: safeMain,
-        high: safeHigh,
-        part: safePart,
+        highAMD: uniqRoleIds([serverConfig.headAMDRoleId, serverConfig.depHeadAMDRoleId]),
+        rdd: uniqRoleIds([serverConfig.RDDRoleId, serverConfig.headRDDRoleId, serverConfig.depHeadRDDRoleId]),
+        ed: uniqRoleIds([serverConfig.EDRoleId, serverConfig.headEDRoleId, serverConfig.depHeadEDRoleId]),
+        jd: uniqRoleIds([serverConfig.JDRoleId, serverConfig.headJDRoleId, serverConfig.depHeadJDRoleId]),
     };
+}
+
+function memberHasAnyRole(member, roleIds) {
+    return uniqRoleIds(roleIds).some((roleId) => member.roles.cache.has(roleId));
 }
 
 function getMemberCategory(member, serverConfig = {}) {
     if (!member) return null;
 
-    const headId = serverConfig.headAMDRoleId;
-    const depHeadId = serverConfig.depHeadAMDRoleId;
-    const partId = serverConfig.partWorkAMDRoleId;
-    const mainId = serverConfig.AMDRoleId;
+    const groups = buildRoleGroups(serverConfig);
 
-    // bugfix #1: забыл что старший состав также имеет роль AMD
-    const hasHigh = Boolean(headId && member.roles.cache.has(headId)) || Boolean(depHeadId && member.roles.cache.has(depHeadId));
-    if (hasHigh) return 'high';
-
-    const hasPart = Boolean(partId && member.roles.cache.has(partId));
-    if (hasPart) return 'part';
-
-    const hasMain = Boolean(mainId && member.roles.cache.has(mainId));
-    if (hasMain) return 'main';
+    if (memberHasAnyRole(member, groups.highAMD)) return 'highAMD';
+    if (memberHasAnyRole(member, groups.rdd)) return 'rdd';
+    if (memberHasAnyRole(member, groups.ed)) return 'ed';
+    if (memberHasAnyRole(member, groups.jd)) return 'jd';
 
     return null;
 }
 
 function buildAccessPlan(serverConfig = {}, rotationIndex = 0) {
     const groups = buildRoleGroups(serverConfig);
-    const idx = ((rotationIndex % 3) + 3) % 3;
+    const rotationOrder = ['highAMD', 'rdd', 'ed', 'jd'];
+    const idx = ((rotationIndex % rotationOrder.length) + rotationOrder.length) % rotationOrder.length;
+    const orderedCategories = [
+        ...rotationOrder.slice(idx),
+        ...rotationOrder.slice(0, idx),
+    ];
 
-    let stageCategories;
-    if (idx === 0) {
-        // День 1: main -> +high -> +part
-        stageCategories = [
-            ['main'],
-            ['main', 'high'],
-            ['main', 'high', 'part'],
-        ];
-    } else if (idx === 1) {
-        // День 2: high -> +part -> +main
-        stageCategories = [
-            ['high'],
-            ['high', 'part'],
-            ['high', 'part', 'main'],
-        ];
-    } else {
-        // День 3: part -> +main -> +high
-        stageCategories = [
-            ['part'],
-            ['part', 'main'],
-            ['part', 'main', 'high'],
-        ];
-    }
-
+    const stageCategories = orderedCategories.map((_, index) => orderedCategories.slice(0, index + 1));
     const stages = stageCategories.map((cats) => {
         const ids = [];
         for (const cat of cats) {
-            if (cat === 'main') ids.push(...(groups.main || []));
-            if (cat === 'high') ids.push(...(groups.high || []));
-            if (cat === 'part') ids.push(...(groups.part || []));
+            ids.push(...(groups[cat] || []));
         }
         return uniqRoleIds(ids);
     });
