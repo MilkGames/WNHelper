@@ -23,6 +23,7 @@ const {
     runDiscordRequest,
     sendMessageWithRetry,
 } = require('../../utils/discordRequest');
+const { ensureGuildMembersCached } = require('../../utils/membersCache');
 const logger = require('../../utils/logger');
 
 const UPDATE_INTERVAL_MS = 60 * 60 * 1000; // 1 час
@@ -397,15 +398,6 @@ async function fetchTextChannel(client, channelId, serverId, channelKey) {
     }
 }
 
-async function fetchGuildMembers(guild) {
-    try {
-        return await guild.members.fetch({ time: 20000, withPresences: false });
-    } catch (error) {
-        logger.info(`Не удалось полностью получить список участников сервера ${guild.id}, используется кэш: ${error}`);
-        return guild.members.cache;
-    }
-}
-
 async function updateServerMessages(client, serverId, serverConfig, channels) {
     const guild = client.guilds.cache.get(serverId);
 
@@ -414,7 +406,7 @@ async function updateServerMessages(client, serverId, serverConfig, channels) {
         return;
     }
 
-    const members = await fetchGuildMembers(guild);
+    const members = await ensureGuildMembersCached(guild);
     const updates = [];
 
     for (const department of DEPARTMENTS) {

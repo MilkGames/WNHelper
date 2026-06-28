@@ -69,9 +69,9 @@ function daysBetween(dateKeyA, dateKeyB) {
 function buildRoleGroups(serverConfig = {}) {
     return {
         highAMD: uniqRoleIds([serverConfig.headAMDRoleId, serverConfig.depHeadAMDRoleId]),
-        rdd: uniqRoleIds([serverConfig.RDDRoleId, serverConfig.headRDDRoleId, serverConfig.depHeadRDDRoleId]),
-        ed: uniqRoleIds([serverConfig.EDRoleId, serverConfig.headEDRoleId, serverConfig.depHeadEDRoleId]),
-        jd: uniqRoleIds([serverConfig.JDRoleId, serverConfig.headJDRoleId, serverConfig.depHeadJDRoleId]),
+        rdd: uniqRoleIds([serverConfig.RDDRoleId]),
+        ed: uniqRoleIds([serverConfig.EDRoleId]),
+        jd: uniqRoleIds([serverConfig.JDRoleId]),
     };
 }
 

@@ -23,7 +23,10 @@ const { sendAmdScheduleNow } = require('../../utils/amdScheduleSender');
 
 module.exports = async (client) => {
     for (const guildId of Object.keys(config.servers)) {
-        if (guildId !== '1249711898744848415') continue;
+        // последний сервер - всегда основной, на нём смен нет
+        const serverIds = Object.keys(config.servers);
+        const mainServerId = serverIds[serverIds.length - 1];
+        if (guildId === mainServerId) continue;
 
         const serverName = client.guilds.cache.get(guildId)?.name || guildId;
         const serverConfig = config.servers[guildId];
@@ -38,7 +41,7 @@ module.exports = async (client) => {
         logger.info(`Смены для AMD успешно запланированы на сервере ${serverName}.`);
 
         cron.schedule(
-            '0 22 * * *', // 22:00
+            '0 21 * * *', // 21:00
             async () => {
                 try {
                     await sendAmdScheduleNow({

@@ -16,8 +16,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 const config = require('../../../config.json');
-
 const logger = require('../../utils/logger');
+
+const { ensureGuildMembersCached } = require('../../utils/membersCache');
 
 module.exports = async (client) => {
     try {
@@ -44,9 +45,7 @@ module.exports = async (client) => {
                         
                         if (!WNroleNumberChannel || !membersChannel) return;
                         
-                        await guild.members.fetch({ time: 120000, withPresences: false, force: true }).catch(err => {
-                            logger.info(`Ошибка! Не удалось загрузить список участников для ${guild.name}: ${err.message}`);
-                        });
+                        await ensureGuildMembersCached(guild);
 
                         const role = guild.roles.cache.get(roleId) || await guild.roles.fetch(roleId).catch(() => null);
                         

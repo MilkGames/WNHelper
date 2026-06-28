@@ -67,6 +67,10 @@ module.exports = async (client) => {
                     (cmd) => cmd.name === name
                 );
 
+                // последний сервер - всегда основной
+                const serverIds = Object.keys(config.servers);
+                const mainServerId = serverIds[serverIds.length - 1];
+
                 if (existingCommand){
                     if (localCommand.deleted){
                         await applicationCommands.delete(existingCommand.id);
@@ -74,7 +78,7 @@ module.exports = async (client) => {
                         continue;
                     }
 
-                    if (localCommand.mainOnly && serverId !== Object.keys(config.servers)[0]){
+                    if (localCommand.mainOnly && serverId !== mainServerId){
                         await applicationCommands.delete(existingCommand.id);
                         logger.info(`Удалена команда "${name}" на сервере ${serverName}, так как она является эксклюзивной для основного сервера.`);
                         continue;
@@ -94,7 +98,7 @@ module.exports = async (client) => {
                         continue;
                     }
 
-                    if (localCommand.mainOnly && serverId !== Object.keys(config.servers)[0]){
+                    if (localCommand.mainOnly && serverId !== mainServerId){
                         logger.info(`Пропущена регистрация команды "${name}" на сервере ${serverName}, так как она является эксклюзивной для основного сервера.`);
                         continue;
                     }
