@@ -1,0 +1,48 @@
+{
+    "guildId": "100000000000000001",
+    "_serverName": "Тестовый сервер",
+    "features": {
+        "giveRoles": true,
+        "staffAudit": true,
+        "discipline": true,
+        "exams": true,
+        "shifts": true,
+        "staffLists": true,
+        "channelCounters": true,
+        "vacations": true
+    },
+    "channels": {
+        "getRoleChannelId": "100000000000000002",
+        "confirmRoleChannelId": "100000000000000003",
+        "examChannelId": "100000000000000004",
+        "examResultChannelId": "100000000000000005"
+    },
+    "commonRoles": {
+        "weazelNewsRoleId": "100000000000000006",
+        "examinerRoleId": "100000000000000007"
+    },
+    "giveRolesSettings": {
+        "inviteDepartmentId": "test-department",
+        "dbRankNumber": 2,
+        "dbAdditionalRoleIds": [
+            "100000000000000008"
+        ],
+        "reviewerRoleIds": [
+            "100000000000000009"
+        ],
+        "blockerRoleIds": []
+    },
+    "staffListSettings": {
+        "highStaffChannelId": "100000000000000010",
+        "leaderAppointmentDate": "2026-08-01",
+        "curatorManagementRankNumbers": [
+            8,
+            9
+        ],
+        "leaderTermDays": 30
+    },
+    "channelCounterSettings": {
+        "employeesChannelId": "100000000000000011",
+        "membersChannelId": "100000000000000012"
+    }
+}

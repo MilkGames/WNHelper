@@ -1,0 +1,18 @@
+{
+  "guildConfigs": [],
+  "shiftSchedules": [],
+  "shiftRotations": [],
+  "giveRoles": [],
+  "blackListGiveRoles": [],
+  "examQueue": [],
+  "examAttempts": [],
+  "examinationRequests": [],
+  "vacationRequests": [],
+  "formWebhookQueue": [],
+  "webhookReceipts": [],
+  "uvalOperations": [],
+  "staffAuditBatches": [],
+  "disciplineCases": [],
+  "disciplineRemovalRequests": [],
+  "massDisciplineBatches": []
+}
