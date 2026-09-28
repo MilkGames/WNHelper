@@ -392,6 +392,12 @@ async function executeOperation(client, operation, { approver = null } = {}) {
             target.memberId,
             current.uvalId
         ));
+        await completeStep(current, 'discipline_history', async () => {
+            if (!target.memberId) return;
+            await invokeAction('discipline.purgeMemberDisciplineHistory', client, guild.id, target.memberId, {
+                updateDiscord: false,
+            });
+        });
         await completeStep(current, 'refresh', async () => {
             scheduleGuildStaffListUpdate(client, guild.id, { reason: `uvalApproval:${current.uvalId}` });
             scheduleGuildChannelCounterUpdate(client, guild.id, { reason: `uvalApproval:${current.uvalId}` });

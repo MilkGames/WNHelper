@@ -27,7 +27,7 @@ async function startStatusRotation(client) {
             name: 'Majestic RP',
         },
         {
-            name: 'Версия 2.0',
+            name: 'Версия 2.0.1',
             type: ActivityType.Custom,
         },
         {

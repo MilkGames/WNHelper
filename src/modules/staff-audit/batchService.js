@@ -20,7 +20,7 @@ const { getStaffAuditSettings } = require('./settings/schema');
 const staffAuditBatches = require('./database').staffAuditBatches;
 const giveRolesService = require('../give-roles');
 const guildConfigService = require('../../core/config/guildConfigService');
-const { getGrantDecision, getMemberRankMatches, getRank } = require('./ranks');
+const { getGrantDecision, getMemberRankMatches } = require('./ranks');
 const {
     assertCanDismissTarget,
     assertCanManageTarget,
@@ -38,7 +38,7 @@ function createId() {
         : `massaudit-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function resolveCurrentRank(member, config, requestedRankNumber, lineNumber) {
+function assertCurrentRankMatchesAction(member, config, fromRankNumber, lineNumber) {
     const matches = getMemberRankMatches(member, config);
     if (matches.length > 1) {
         throw new StaffAuditError(
@@ -46,44 +46,67 @@ function resolveCurrentRank(member, config, requestedRankNumber, lineNumber) {
             'mass_audit_target_multiple_ranks'
         );
     }
-
-    if (matches.length === 1) {
-        if (requestedRankNumber !== null && requestedRankNumber !== matches[0].number) {
-            throw new StaffAuditError(
-                `Строка ${lineNumber}: from:${requestedRankNumber} не совпадает с ролью ранга ${matches[0].number}.`,
-                'mass_audit_from_rank_mismatch'
-            );
-        }
-        return matches[0];
-    }
-
-    if (requestedRankNumber === null) {
+    if (matches.length === 1 && matches[0].number !== fromRankNumber) {
         throw new StaffAuditError(
-            `Строка ${lineNumber}: у сотрудника нет роли ранга. Добавьте параметр from:<текущий ранг>.`,
-            'mass_audit_from_rank_required'
+            `Строка ${lineNumber}: начало action:${fromRankNumber} не совпадает с ролью ранга ${matches[0].number}.`,
+            'mass_audit_action_rank_mismatch'
         );
     }
+}
 
-    const rank = getRank(config, requestedRankNumber);
-    if (!rank) {
-        throw new StaffAuditError(
-            `Строка ${lineNumber}: текущий ранг ${requestedRankNumber} не настроен.`,
-            'mass_audit_from_rank_not_found'
+function buildTargetLabel(item) {
+    if (item.memberId) return `<@${item.memberId}>`;
+    return `${item.displayName} | ${item.staticId}`;
+}
+
+function findDuplicateTargetLabels(items) {
+    const seenMemberIds = new Set();
+    const seenStaticIds = new Set();
+    const duplicates = [];
+
+    for (const item of items) {
+        const memberId = item.memberId ? String(item.memberId) : null;
+        const staticId = item.staticId ? String(item.staticId) : null;
+        const duplicate = Boolean(
+            (memberId && seenMemberIds.has(memberId)) ||
+            (staticId && seenStaticIds.has(staticId))
         );
+        if (duplicate) duplicates.push(buildTargetLabel(item));
+        if (memberId) seenMemberIds.add(memberId);
+        if (staticId) seenStaticIds.add(staticId);
     }
-    return rank;
+
+    return [...new Set(duplicates)];
 }
 
 async function validateItem(guild, config, actor, item) {
-    const member = await guild.members.fetch(item.memberId).catch(() => null);
-    if (!member) {
-        throw new StaffAuditError(`Строка ${item.lineNumber}: сотрудник ${item.memberId} не найден.`, 'member_not_found');
+    let target;
+    try {
+        target = await staffAuditService.resolveMemberInput(guild, item.memberInput, item.staticId || null);
+    } catch (error) {
+        if (error instanceof StaffAuditError) {
+            error.userMessage = `Строка ${item.lineNumber}: ${error.userMessage}`;
+        }
+        throw error;
     }
 
-    const snapshot = {
+    const member = target.member;
+    const snapshot = member ? {
         memberId: member.id,
         displayName: member.displayName,
         stateHash: buildMemberStateHash(member),
+    } : {
+        memberId: null,
+        displayName: target.displayName,
+        staticId: target.staticId,
+        stateHash: null,
+    };
+    const resolvedItem = {
+        ...item,
+        memberId: target.memberId,
+        displayName: target.displayName,
+        staticId: target.staticId,
+        targetKey: target.memberId ? `member:${target.memberId}` : `external:${target.staticId}`,
     };
 
     if (item.action === 'invite') {
@@ -95,10 +118,14 @@ async function validateItem(guild, config, actor, item) {
         if (errors.length) throw new StaffAuditError(`Строка ${item.lineNumber}: ${errors.join(' ')}`, 'assignment_invalid');
         const decision = getGrantDecision(actor, config, assignment.rank.number);
         if (!decision.allowed) throw new StaffAuditError(`Строка ${item.lineNumber}: ${decision.reason}`, 'rank_access_denied');
-        const memberErrors = giveRolesService.getMemberAssignmentErrors(member, assignment);
-        if (memberErrors.length) throw new StaffAuditError(`Строка ${item.lineNumber}: ${memberErrors.join(' ')}`, 'member_assignment_invalid');
+        if (member) {
+            const memberErrors = giveRolesService.getMemberAssignmentErrors(member, assignment);
+            if (memberErrors.length) {
+                throw new StaffAuditError(`Строка ${item.lineNumber}: ${memberErrors.join(' ')}`, 'member_assignment_invalid');
+            }
+        }
         return {
-            ...item,
+            ...resolvedItem,
             assignment: {
                 rankNumber: assignment.rank.number,
                 departmentId: assignment.department?.id || null,
@@ -112,50 +139,44 @@ async function validateItem(guild, config, actor, item) {
     }
 
     if (item.action === 'rank') {
-        const currentRank = resolveCurrentRank(member, config, item.fromRankNumber, item.lineNumber);
-        snapshot.rankNumber = currentRank.number;
-        const destination = getRank(config, item.rankNumber);
-        if (!destination) throw new StaffAuditError(`Строка ${item.lineNumber}: ранг ${item.rankNumber} не настроен.`, 'rank_not_found');
-        if (destination.number === currentRank.number) {
-            throw new StaffAuditError(`Строка ${item.lineNumber}: сотруднику уже выдан ранг ${destination.number}.`, 'same_rank');
+        const rankAction = staffAuditService.parseRankAction(item.actionInput, config);
+        if (member) {
+            assertCurrentRankMatchesAction(member, config, rankAction.fromNumber, item.lineNumber);
+            snapshot.rankNumber = rankAction.fromNumber;
+            assertCanManageTarget(actor, member, config, {
+                currentTargetRankNumber: rankAction.fromNumber,
+                targetRankNumber: rankAction.toNumber,
+                actionLabel: rankAction.promotion ? 'повысить' : 'понизить',
+                allowActorWithoutRank: rankAction.promotion && !rankAction.toRank.roleId,
+            });
+            if (rankAction.promotion) {
+                await invokeAction('discipline.assertPromotionAllowed', guild.id, member.id, config);
+            }
         }
-        assertCanManageTarget(actor, member, config, {
-            currentTargetRankNumber: currentRank.number,
-            targetRankNumber: destination.number,
-            actionLabel: destination.number > currentRank.number ? 'повысить' : 'понизить',
-        });
-        if (destination.number > currentRank.number) {
-            await invokeAction('discipline.assertPromotionAllowed', guild.id, member.id, config);
-        }
-        const decision = getGrantDecision(actor, config, destination.number);
+        const decision = getGrantDecision(actor, config, rankAction.toNumber);
         if (!decision.allowed) throw new StaffAuditError(`Строка ${item.lineNumber}: ${decision.reason}`, 'rank_access_denied');
         return {
-            ...item,
-            fromRankNumber: currentRank.number,
+            ...resolvedItem,
+            actionInput: `${rankAction.fromNumber}-${rankAction.toNumber}`,
+            fromRankNumber: rankAction.fromNumber,
+            rankNumber: rankAction.toNumber,
             snapshot,
-            preview: `${destination.number > currentRank.number ? 'Повысить' : 'Понизить'} ${currentRank.number}-${destination.number}`,
+            preview: `${rankAction.promotion ? 'Повысить' : 'Понизить'} ${rankAction.fromNumber}-${rankAction.toNumber}`,
             status: 'pending',
         };
     }
 
-    const hierarchy = assertCanDismissTarget(actor, member, config, { actionLabel: 'уволить' });
-    await invokeAction('discipline.assertOrdinaryDismissalAllowed', guild.id, member.id, config);
-    snapshot.rankNumber = hierarchy.targetRank?.number || null;
-    return { ...item, snapshot, preview: 'Уволить', status: 'pending' };
+    if (member) {
+        const hierarchy = assertCanDismissTarget(actor, member, config, { actionLabel: 'уволить' });
+        await invokeAction('discipline.assertOrdinaryDismissalAllowed', guild.id, member.id, config);
+        snapshot.rankNumber = hierarchy.targetRank?.number || null;
+    }
+    return { ...resolvedItem, snapshot, preview: 'Уволить', status: 'pending' };
 }
 
 async function createBatch(client, { guild, config, actor, text }) {
     staffAuditService.assertFeatureEnabled(config);
     const parsed = parseMassAuditText(text);
-    const duplicateMemberIds = parsed
-        .map((item) => item.memberId)
-        .filter((memberId, index, values) => values.indexOf(memberId) !== index);
-    if (duplicateMemberIds.length) {
-        throw new StaffAuditError(
-            `Один сотрудник не может встречаться в пакете несколько раз: ${[...new Set(duplicateMemberIds)].join(', ')}.`,
-            'mass_audit_duplicate_member'
-        );
-    }
     const settings = getStaffAuditSettings(config);
     if (parsed.length > settings.massAuditMaxItems) {
         throw new StaffAuditError(
@@ -166,6 +187,14 @@ async function createBatch(client, { guild, config, actor, text }) {
 
     const items = [];
     for (const item of parsed) items.push(await validateItem(guild, config, actor, item));
+
+    const duplicateTargets = findDuplicateTargetLabels(items);
+    if (duplicateTargets.length) {
+        throw new StaffAuditError(
+            `Один сотрудник не может встречаться в пакете несколько раз: ${duplicateTargets.join(', ')}.`,
+            'mass_audit_duplicate_member'
+        );
+    }
 
     const now = Date.now();
     const batch = {
@@ -189,7 +218,7 @@ function buildPreview(batch) {
         '',
     ];
     for (const item of batch.items) {
-        lines.push(`${item.lineNumber}. <@${item.memberId}> - ${item.preview}`);
+        lines.push(`${item.lineNumber}. ${buildTargetLabel(item)} - ${item.preview}`);
     }
     lines.push('', 'После подтверждения операции выполняются последовательно. Ошибка одной строки не останавливает остальные.');
     lines.push('', '-# Интерфейс подтверждения действителен 24 часа.');
@@ -240,12 +269,23 @@ async function executeItem(client, guild, config, actor, item, massauditId) {
         };
     }
 
-    const member = await guild.members.fetch(item.memberId).catch(() => null);
-    if (!member || buildMemberStateHash(member) !== item.snapshot.stateHash) {
-        return { status: 'skipped_state_changed', error: 'Состояние сотрудника изменилось после предпросмотра.' };
+    let member = null;
+    let target;
+    if (item.memberId) {
+        member = await guild.members.fetch(item.memberId).catch(() => null);
+        if (!member || buildMemberStateHash(member) !== item.snapshot.stateHash) {
+            return { status: 'skipped_state_changed', error: 'Состояние сотрудника изменилось после предпросмотра.' };
+        }
+        target = await staffAuditService.resolveMemberInput(guild, member.id, item.staticId || null);
+    } else {
+        target = {
+            member: null,
+            memberId: null,
+            displayName: item.displayName,
+            staticId: item.staticId,
+            displayValue: item.displayName,
+        };
     }
-
-    const target = await staffAuditService.resolveMemberInput(guild, member.id, item.staticId || null);
     if (item.action === 'invite') {
         const { errors, assignment } = giveRolesService.getManualAssignmentErrors(guild, config, {
             rankNumber: item.assignment.rankNumber,
@@ -253,8 +293,10 @@ async function executeItem(client, guild, config, actor, item, massauditId) {
             reason: item.reason,
         });
         if (errors.length) throw new StaffAuditError(errors.join('\n'), 'assignment_invalid');
-        const baseName = staffAuditService.extractBaseName(target.displayName, target.staticId);
-        await giveRolesService.applyAssignment(member, assignment, baseName, target.staticId);
+        if (member) {
+            const baseName = staffAuditService.extractBaseName(target.displayName, target.staticId);
+            await giveRolesService.applyAssignment(member, assignment, baseName, target.staticId);
+        }
         await staffAuditService.sendInviteRecord(client, {
             guildId: guild.id,
             config,
@@ -274,7 +316,7 @@ async function executeItem(client, guild, config, actor, item, massauditId) {
             config,
             actor,
             target,
-            actionInput: `${item.fromRankNumber}-${item.rankNumber}`,
+            actionInput: item.actionInput,
             reason: item.reason,
             keepDepartment: item.keepDepartment,
             nonceSeed: `massAudit:${massauditId}:${item.lineNumber}`,
@@ -290,7 +332,7 @@ async function executeItem(client, guild, config, actor, item, massauditId) {
         target,
         reason: item.reason,
         source: 'mass_audit',
-        expectedTargetStateHash: item.snapshot.stateHash,
+        expectedTargetStateHash: item.snapshot?.stateHash || null,
         nonceSeed: `massAudit:${massauditId}:${item.lineNumber}`,
         deferApprovalRequest: true,
     });
@@ -406,7 +448,7 @@ function buildResult(batch) {
             failed: `❌ ошибка: ${item.error || 'неизвестно'}${item.uvalId ? ` · ID увольнения: ${item.uvalId}` : ''}`,
             pending: '• ожидает выполнения',
         };
-        lines.push(`${item.lineNumber}. <@${item.memberId}> - ${labels[item.status] || 'неизвестный статус'}`);
+        lines.push(`${item.lineNumber}. ${buildTargetLabel(item)} - ${labels[item.status] || 'неизвестный статус'}`);
     }
     if (batch.status === 'partially_completed') {
         lines.push('', `Для повторения: /manualtools retry_massaudit massaudit_id:${batch.massauditId}`);

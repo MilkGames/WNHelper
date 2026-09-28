@@ -327,6 +327,9 @@ async function save(session) {
     const document = prepareSettingsForStorage(latestConfig);
     document.guildId = session.guildId;
     document._serverName = preparedDraft._serverName;
+    if (Object.prototype.hasOwnProperty.call(latestConfig, 'botEnabled')) {
+        document.botEnabled = latestConfig.botEnabled;
+    }
 
     const allowed = session.fullAccess
         ? new Set([...SETTINGS_SECTION_KEYS, 'access'])

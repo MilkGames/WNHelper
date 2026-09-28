@@ -16,6 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 const logger = require('../core/logging/logger');
+const guildConfigService = require('../core/config/guildConfigService');
 const { getModuleEvents } = require('./moduleRegistry');
 const { routeInteraction } = require('./interactionRouter');
 const readiness = require('./readiness');
@@ -45,12 +46,29 @@ function groupEvents({ recoveryMode = false } = {}) {
     return grouped;
 }
 
+
+function getGuildIdFromArguments(argumentsList) {
+    for (const value of argumentsList) {
+        const guildId = value?.guildId || value?.guild?.id || value?.message?.guildId || value?.message?.guild?.id;
+        if (guildId) return String(guildId);
+    }
+    return null;
+}
+
+function shouldSkipDisabledGuild(eventName, argumentsList, { recoveryMode = false } = {}) {
+    if (recoveryMode || eventName === 'clientReady') return false;
+    const guildId = getGuildIdFromArguments(argumentsList);
+    if (!guildId) return false;
+    return guildConfigService.isEnabled(guildId) === false;
+}
+
 function registerEvents(client, options = {}) {
     const grouped = groupEvents(options);
     readiness.configureClientReadyHandlers(grouped.get('clientReady') || []);
     for (const [eventName, handlers] of grouped.entries()) {
         logger.info('Подключаются обработчики события', { event: eventName, handlers: handlers.length });
         client.on(eventName, async (...argumentsList) => {
+            if (shouldSkipDisabledGuild(eventName, argumentsList, options)) return;
             if (eventName === 'interactionCreate') {
                 await routeInteraction(client, argumentsList[0], handlers);
                 return;
@@ -77,5 +95,7 @@ function registerEvents(client, options = {}) {
 module.exports = {
     groupEvents,
     isRecoveryEventAllowed,
+    getGuildIdFromArguments,
+    shouldSkipDisabledGuild,
     registerEvents,
 };

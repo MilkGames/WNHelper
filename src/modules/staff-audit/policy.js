@@ -79,6 +79,7 @@ function assertCanManageTarget(actor, targetMember, config, {
     currentTargetRankNumber = null,
     targetRankNumber = null,
     actionLabel = 'выполнить кадровое действие',
+    allowActorWithoutRank = false,
 } = {}) {
     if (!actor || !targetMember) {
         throw new StaffAuditError('Для проверки иерархии нужны оба участника.', 'hierarchy_member_missing');
@@ -87,7 +88,10 @@ function assertCanManageTarget(actor, targetMember, config, {
         throw new StaffAuditError(`Нельзя ${actionLabel} в отношении самого себя.`, 'self_action_denied');
     }
 
-    const actorRank = getStrictMemberRank(actor, config, 'исполнителя');
+    const actorRankMatches = getMemberRankMatches(actor, config);
+    const actorRank = allowActorWithoutRank && actorRankMatches.length === 0
+        ? null
+        : getStrictMemberRank(actor, config, 'исполнителя');
     const targetRank = currentTargetRankNumber === null
         ? getStrictMemberRank(targetMember, config, 'сотрудника')
         : getRank(config, currentTargetRankNumber);
@@ -96,6 +100,10 @@ function assertCanManageTarget(actor, targetMember, config, {
             `Текущий ранг ${currentTargetRankNumber} отсутствует в настройках.`,
             'current_rank_not_found'
         );
+    }
+
+    if (!actorRank) {
+        return { actorRank: null, targetRank, hierarchySkipped: true };
     }
 
     if (targetRank.number >= actorRank.number) {

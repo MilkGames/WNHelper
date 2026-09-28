@@ -24,7 +24,7 @@ const {
 
 const { getDefaultFooter } = require('../../core/ui/defaultFooter');
 
-const TERMINAL_STATUSES = new Set(['satisfied', 'rejected_final', 'withdrawn']);
+const TERMINAL_STATUSES = new Set(['satisfied', 'rejected_final', 'withdrawn', 'cancelled_by_dismissal']);
 const STATUS_LABELS = {
     creating: 'Создаётся',
     publication_failed: 'Не удалось опубликовать обращение',
@@ -34,6 +34,7 @@ const STATUS_LABELS = {
     satisfied: 'Удовлетворено',
     rejected_final: 'Отклонено окончательно',
     withdrawn: 'Отозвано сотрудником',
+    cancelled_by_dismissal: 'Закрыто из-за увольнения сотрудника',
 };
 const TYPE_LABELS = {
     basis: 'Обжалование основания взыскания',

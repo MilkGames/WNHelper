@@ -406,6 +406,7 @@ async function changeRank(client, {
             currentTargetRankNumber: currentRankConfirmed ? rankAction.fromNumber : null,
             targetRankNumber: rankAction.toNumber,
             actionLabel: rankAction.promotion ? 'повысить' : 'понизить',
+            allowActorWithoutRank: rankAction.promotion && !rankAction.toRank.roleId,
         });
     }
     const grantDecision = getGrantDecision(actor, config, rankAction.toNumber);

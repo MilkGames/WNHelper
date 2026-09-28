@@ -38,6 +38,7 @@ module.exports = {
         'discipline.assertPromotionAllowed': service.assertPromotionAllowed,
         'discipline.closeExternalDiscipline': service.closeExternalDiscipline,
         'discipline.closeMemberDiscipline': service.closeMemberDiscipline,
+        'discipline.purgeMemberDisciplineHistory': service.purgeMemberDisciplineHistory,
         'discipline.handleUvalRejected': service.handleUvalRejected,
         'discipline.issueCase': service.issueCase,
         'discipline.recordRecertificationExamResult': service.recordRecertificationExamResult,

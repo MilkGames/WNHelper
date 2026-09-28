@@ -41,18 +41,28 @@ function isOperationalConfig(config) {
     if (!config) return false;
 
     return Object.entries(config).some(([key, value]) => {
-        if (['guildId', '_serverName', 'settingsManagerRoleIds'].includes(key)) return false;
+        if (['guildId', '_serverName', 'settingsManagerRoleIds', 'botEnabled'].includes(key)) return false;
         return hasMeaningfulValue(value);
     });
 }
 
+function mergeGuildConfigDocuments(documents) {
+    const merged = new Map();
+    for (const document of Array.isArray(documents) ? documents : []) {
+        const guildId = normalizeGuildId(document?.guildId);
+        if (!guildId) continue;
+
+        const current = merged.get(guildId);
+        merged.set(guildId, current
+            ? { ...current, ...document, guildId }
+            : { ...document, guildId });
+    }
+    return merged;
+}
+
 async function reloadCache() {
     const documents = await guildConfigs.find();
-    cache = new Map(
-        documents
-            .filter((document) => normalizeGuildId(document.guildId))
-            .map((document) => [normalizeGuildId(document.guildId), { ...document }])
-    );
+    cache = mergeGuildConfigDocuments(documents);
     initialized = true;
 }
 
@@ -72,21 +82,30 @@ function getAny(guildId) {
     return clone(cache.get(normalizeGuildId(guildId)) || null);
 }
 
+function isEnabled(guildId) {
+    const config = getAny(guildId);
+    return !config || config.botEnabled !== false;
+}
+
 function get(guildId) {
     const config = getAny(guildId);
+    if (config?.botEnabled === false) return null;
     return isOperationalConfig(config) ? config : null;
 }
 
 function getAll() {
     assertInitialized();
     return [...cache.values()]
+        .filter((config) => config.botEnabled !== false)
         .filter(isOperationalConfig)
         .map(clone);
 }
 
 function getAllIncludingEmpty() {
     assertInitialized();
-    return [...cache.values()].map(clone);
+    return [...cache.values()]
+        .filter((config) => config.botEnabled !== false)
+        .map(clone);
 }
 
 function getGuildIds() {
@@ -181,6 +200,7 @@ module.exports = {
     reloadCache,
     get,
     getAny,
+    isEnabled,
     getAll,
     getAllIncludingEmpty,
     getGuildIds,

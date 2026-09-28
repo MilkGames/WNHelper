@@ -172,6 +172,101 @@ test('принятие и одобрение ДБ поддерживают ра�
     }
 });
 
+test('повышение на ранг без Discord-роли допускает исполнителя без роли ранга', async () => {
+    const restore = installRuntimeStubs();
+    try {
+        const staffAuditService = require('../src/modules/staff-audit/service');
+        const guild = {
+            id: '100000000000000099',
+            roles: { cache: new Map() },
+        };
+        const actor = {
+            id: '100000000000000090',
+            guild,
+            roles: { cache: new Map() },
+        };
+        const member = {
+            id: '100000000000000091',
+            guild,
+            roles: { cache: new Map() },
+        };
+        const target = {
+            member,
+            memberId: member.id,
+            displayName: 'Employee | 7658',
+            staticId: '7658',
+            displayValue: '<@100000000000000091>',
+        };
+        const config = {
+            features: { staffAudit: true },
+            ranks: [
+                {
+                    number: 1,
+                    name: 'First',
+                    roleId: null,
+                    grantPolicy: { mode: 'unrestricted', roleIds: [] },
+                },
+                {
+                    number: 2,
+                    name: 'Second',
+                    roleId: null,
+                    grantPolicy: { mode: 'unrestricted', roleIds: [] },
+                },
+            ],
+        };
+
+        const result = await staffAuditService.changeRank(null, {
+            guild,
+            config,
+            actor,
+            target,
+            actionInput: '1-2',
+            reason: 'Повышение',
+            currentRankConfirmed: true,
+            skipDiscord: true,
+            skipAudit: true,
+            skipPromotionRecord: true,
+        });
+        assert.equal(result.rankAction.formattedAction, 'Повышен 1-2');
+
+        config.ranks[1].roleId = '100000000000000092';
+        await assert.rejects(
+            () => staffAuditService.changeRank(null, {
+                guild,
+                config,
+                actor,
+                target,
+                actionInput: '1-2',
+                reason: 'Повышение',
+                currentRankConfirmed: true,
+                skipDiscord: true,
+                skipAudit: true,
+                skipPromotionRecord: true,
+            }),
+            (error) => error?.code === 'исполнителя_rank_missing'
+        );
+
+        config.ranks[1].roleId = null;
+        await assert.rejects(
+            () => staffAuditService.changeRank(null, {
+                guild,
+                config,
+                actor,
+                target,
+                actionInput: '2-1',
+                reason: 'Понижение',
+                currentRankConfirmed: true,
+                skipDiscord: true,
+                skipAudit: true,
+                skipPromotionRecord: true,
+            }),
+            (error) => error?.code === 'исполнителя_rank_missing'
+        );
+    } finally {
+        restore();
+    }
+});
+
 test('справка кадрового аудита покрывает основные процессы и ограничения Discord', () => {
     const restore = installRuntimeStubs();
     try {
@@ -202,6 +297,7 @@ test('справка кадрового аудита покрывает осно
             '/massaudit',
             'не умеют сами определять, утверждён ли отчёт или заявление',
             'текущим считается ранг слева в `action`',
+            'при повышении на ранг без Discord-роли исполнитель без роли ранга может провести операцию',
             'наличие других ролей рангов само по себе slash-команду не останавливает',
             'ошибка никнейма записывается в лог',
             'одно повышение за московский календарный день',
@@ -209,7 +305,10 @@ test('справка кадрового аудита покрывает осно
             'Одобрить (ДБ)',
             'интеграционные управляемые роли',
             'закрывает очереди экзаменации, попытки и заявки',
-            'Во всех трёх действиях бот сначала ищет статик в конце никнейма',
+            'Во всех трёх действиях для Discord-участника бот сначала ищет статик в конце никнейма',
+            'action:2-3',
+            'обычное текстовое имя',
+            '@username',
             'повторная проверка может отметить строку как изменившуюся',
             'не проверяет кадровый ранг или специальную роль пользователя',
             '/manualtools retry_staff_action',
@@ -228,6 +327,8 @@ test('справка кадрового аудита покрывает осно
             'Повышение по утверждённому отчёту',
             'статик должен читаться из никнейма',
             '`static` поддерживается лишь в строке `invite`',
+            'параметр `from` сверяется с найденной ролью',
+            '`member` принимает только Discord ID или упоминание',
         ]) {
             assert.equal(text.includes(misleading), false, `в справке осталось неточное утверждение: ${misleading}`);
         }

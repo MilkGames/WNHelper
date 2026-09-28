@@ -22,7 +22,22 @@ const { replyWithRetry } = require('../../../core/discord/request');
 function componentGroup(interaction) {
     const customId = String(interaction.customId || '');
     const normalized = customId.toLowerCase();
+
     if (!normalized || normalized.startsWith('vacation:')) return null;
+
+    // TODO: УБРАТЬ ЭТО ОТСЮДА И ПОФИКСИТЬ ЭТОТ БАГ
+    if (
+        normalized.startsWith('disciplineremoval:approve') ||
+        normalized.startsWith('disciplineremoval:reject') ||
+        normalized.startsWith('disciplineremovalreject') ||
+        normalized.startsWith('disciplineappeal:approve') ||
+        normalized.startsWith('disciplineappeal:reject') ||
+        normalized.startsWith('disciplineappealdecision')
+    ) {
+        return null;
+    }
+    // ------------------------------------------------------
+
     if (normalized.startsWith('settings:')) return 'settings';
     if (normalized.startsWith('shift:')) return 'shifts';
     if (

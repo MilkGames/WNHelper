@@ -1239,7 +1239,7 @@ async function releaseMemberFromSchedulesInPeriod(client, guildId, memberId, sta
 }
 
 async function releaseMemberFromSchedules(client, guildId, memberId, { reason = 'offboarding' } = {}) {
-    const schedules = await shiftSchedules.find({ guildId: String(guildId) });
+    const schedules = await shiftSchedules.find({ guildId: String(guildId), status: 'active' });
     let changedCount = 0;
     let removedSlotCount = 0;
     for (const schedule of schedules) {

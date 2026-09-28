@@ -2297,7 +2297,7 @@ async function handleUvalRejected(client, guildId, uvalId) {
 async function closeMemberDiscipline(client, guildId, memberId) {
     const now = Date.now();
     const affected = await mutateDb((db) => {
-        const result = { sanctions: [], requests: [] };
+        const result = { sanctions: [], requests: [], appeals: [] };
         for (const caseRecord of db.disciplineCases || []) {
             if (String(caseRecord.guildId) !== String(guildId) || String(caseRecord.memberId) !== String(memberId)) continue;
             let active = false;
@@ -2326,6 +2326,26 @@ async function closeMemberDiscipline(client, guildId, memberId) {
                     threadId: request.threadId || null,
                 });
             }
+        }
+        const caseIds = new Set(
+            (db.disciplineCases || [])
+                .filter((caseRecord) => (
+                    String(caseRecord.guildId) === String(guildId) &&
+                    String(caseRecord.memberId) === String(memberId)
+                ))
+                .map((caseRecord) => String(caseRecord.caseId))
+        );
+        for (const appeal of db.disciplineAppeals || []) {
+            if (String(appeal.guildId) !== String(guildId) || !caseIds.has(String(appeal.caseId))) continue;
+            if (['satisfied', 'rejected_final', 'withdrawn', 'cancelled_by_dismissal'].includes(appeal.status)) continue;
+            appeal.status = 'cancelled_by_dismissal';
+            appeal.decidedAt = now;
+            appeal.updatedAt = now;
+            appeal.currentReviewerUserIds = [];
+            appeal.currentReviewerRoleIds = [];
+            appeal.history ||= [];
+            appeal.history.push({ action: 'cancelled_by_dismissal', at: now });
+            result.appeals.push({ ...appeal });
         }
         return result;
     });
@@ -2360,10 +2380,71 @@ async function closeMemberDiscipline(client, guildId, memberId) {
             });
         }
     }
+    if (affected.appeals.length) {
+        for (const appeal of affected.appeals) {
+            if (appeal.channelId && appeal.messageId) {
+                const channel = await client.channels.fetch(appeal.channelId).catch(() => null);
+                const message = await channel?.messages?.fetch?.(appeal.messageId).catch(() => null);
+                if (message) {
+                    await editMessageWithRetry(message, {
+                        content: 'Обжалование закрыто из-за увольнения сотрудника.',
+                        components: [],
+                        allowedMentions: { parse: [] },
+                    }).catch(() => undefined);
+                }
+            }
+            if (appeal.threadId) {
+                const thread = await client.channels.fetch(appeal.threadId).catch(() => null);
+                if (thread) {
+                    await closeThreadWithRetry(thread, {
+                        reason: `WN Helper: сотрудник ${memberId} уволен`,
+                    }).catch(() => undefined);
+                }
+            }
+        }
+    }
     const guild = await client.guilds.fetch(guildId).catch(() => null);
     const member = await guild?.members?.fetch?.(memberId).catch(() => null);
     if (member && config) await syncDisciplineRoles(member, config);
     return affected;
+}
+
+
+async function purgeMemberDisciplineHistory(client, guildId, memberId, { updateDiscord = true } = {}) {
+    if (updateDiscord) await closeMemberDiscipline(client, guildId, memberId);
+    return mutateDb((db) => {
+        const caseIds = new Set(
+            (db.disciplineCases || [])
+                .filter((record) => (
+                    String(record.guildId) === String(guildId) &&
+                    String(record.memberId) === String(memberId)
+                ))
+                .map((record) => String(record.caseId))
+        );
+        const beforeCases = (db.disciplineCases || []).length;
+        const beforeAppeals = (db.disciplineAppeals || []).length;
+        const beforeRequests = (db.disciplineRemovalRequests || []).length;
+        db.disciplineCases = (db.disciplineCases || []).filter((record) => !(
+            String(record.guildId) === String(guildId) &&
+            String(record.memberId) === String(memberId)
+        ));
+        db.disciplineAppeals = (db.disciplineAppeals || []).filter((appeal) => !(
+            String(appeal.guildId) === String(guildId) &&
+            caseIds.has(String(appeal.caseId))
+        ));
+        db.disciplineRemovalRequests = (db.disciplineRemovalRequests || []).filter((request) => !(
+            String(request.guildId) === String(guildId) &&
+            (
+                String(request.memberId || '') === String(memberId) ||
+                caseIds.has(String(request.caseId || ''))
+            )
+        ));
+        return {
+            cases: beforeCases - db.disciplineCases.length,
+            appeals: beforeAppeals - db.disciplineAppeals.length,
+            requests: beforeRequests - db.disciplineRemovalRequests.length,
+        };
+    });
 }
 
 async function closeExternalDiscipline(client, guildId, staticId) {
@@ -3193,6 +3274,7 @@ module.exports = {
     closeInactiveDisciplineThreads,
     closeExternalDiscipline,
     closeMemberDiscipline,
+    purgeMemberDisciplineHistory,
     createRemovalRequest,
     extendWorkoffDeadline,
     fetchCase,

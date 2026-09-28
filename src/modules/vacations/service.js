@@ -134,6 +134,37 @@ function countInclusiveDays(startDate, endDate) {
     return Math.floor((endUtc - startUtc) / DAY_MS) + 1;
 }
 
+function getEffectiveApprovalPeriod(request, today = getMoscowDateKey()) {
+    const requestedStartDate = request?.requestedStartDate || request?.startDate;
+    const requestedEndDate = request?.requestedEndDate || request?.endDate;
+    if (!parseDateKey(requestedStartDate) || !parseDateKey(requestedEndDate) || !parseDateKey(today)) {
+        throw new VacationError('В заявке указаны некорректные даты.', 'invalid_dates');
+    }
+    if (compareDateKeys(requestedEndDate, today) < 0) {
+        throw new VacationError('Период заявки уже полностью закончился.', 'vacation_period_expired');
+    }
+
+    const startDate = compareDateKeys(requestedStartDate, today) < 0
+        ? today
+        : requestedStartDate;
+    const durationDays = countInclusiveDays(startDate, requestedEndDate);
+    if (!durationDays) {
+        throw new VacationError('Период заявки уже полностью закончился.', 'vacation_period_expired');
+    }
+    const approvalWaitDays = compareDateKeys(requestedStartDate, startDate) < 0
+        ? countInclusiveDays(requestedStartDate, addDays(startDate, -1)) || 0
+        : 0;
+
+    return {
+        requestedStartDate,
+        requestedEndDate,
+        startDate,
+        endDate: requestedEndDate,
+        durationDays,
+        approvalWaitDays,
+    };
+}
+
 function getMonthSlices(startDate, endDate) {
     const total = countInclusiveDays(startDate, endDate);
     if (!total) return [];
@@ -468,9 +499,12 @@ async function createOrUpdateRequest(client, {
         departmentName: department ? `${department.shortName} - ${department.fullName}` : null,
         rankNumber: rank?.number || null,
         rankName: rank?.name || null,
+        requestedStartDate: startDate,
+        requestedEndDate: endDate,
         startDate,
         endDate,
         durationDays: period.durationDays,
+        approvalWaitDays: 0,
         monthSlices: period.monthSlices,
         reason: normalizedReason,
         exceedReasons: period.exceedReasons,
@@ -524,12 +558,14 @@ async function approveRequest(client, requestId, approver, { exceptionReason = n
     const target = await approver.guild.members.fetch(request.memberId).catch(() => null);
     if (!target) throw new VacationError('Сотрудник больше не находится на сервере.', 'member_missing');
     const { department, rank } = assertMemberCanUseType(target, config, type);
+    const today = getMoscowDateKey();
+    const effectivePeriod = getEffectiveApprovalPeriod(request, today);
     const period = validatePeriodAndLimits({
         guildId: request.guildId,
         memberId: request.memberId,
         type,
-        startDate: request.startDate,
-        endDate: request.endDate,
+        startDate: effectivePeriod.startDate,
+        endDate: effectivePeriod.endDate,
         excludedRequestId: request.requestId,
     });
     const route = resolveApprovalRoute(target, config, type, department, period.exceedReasons);
@@ -537,20 +573,51 @@ async function approveRequest(client, requestId, approver, { exceptionReason = n
         route.routeType !== request.approvalRouteType ||
         JSON.stringify([...route.roleIds].sort()) !== JSON.stringify([...(request.approvalRoleIds || [])].sort())
     );
-    if (routeChanged || JSON.stringify(period.monthSlices) !== JSON.stringify(request.monthSlices || [])) {
+    const approvalPeriodChanged = (
+        effectivePeriod.startDate !== request.startDate ||
+        effectivePeriod.endDate !== request.endDate ||
+        effectivePeriod.durationDays !== request.durationDays ||
+        effectivePeriod.approvalWaitDays !== Number(request.approvalWaitDays || 0) ||
+        !request.requestedStartDate ||
+        !request.requestedEndDate
+    );
+    const limitsChanged = JSON.stringify(period.monthSlices) !== JSON.stringify(request.monthSlices || []) ||
+        JSON.stringify(period.exceedReasons) !== JSON.stringify(request.exceedReasons || []);
+    if (routeChanged || limitsChanged || approvalPeriodChanged) {
         request = await updateStoredRequest(request.requestId, (entry) => {
+            const now = Date.now();
             entry.departmentId = department?.id || null;
             entry.departmentName = department ? `${department.shortName} - ${department.fullName}` : null;
             entry.rankNumber = rank?.number || null;
             entry.rankName = rank?.name || null;
+            entry.requestedStartDate = effectivePeriod.requestedStartDate;
+            entry.requestedEndDate = effectivePeriod.requestedEndDate;
+            entry.startDate = effectivePeriod.startDate;
+            entry.endDate = effectivePeriod.endDate;
+            entry.durationDays = period.durationDays;
+            entry.approvalWaitDays = effectivePeriod.approvalWaitDays;
             entry.monthSlices = period.monthSlices;
             entry.exceedReasons = period.exceedReasons;
             entry.approvalRoleIds = route.roleIds;
             entry.approvalRouteType = route.routeType;
             entry.approvalRouteLabel = route.routeLabel;
-            entry.updatedAt = Date.now();
+            entry.updatedAt = now;
             entry.history ||= [];
-            entry.history.push({ action: 'approval_route_revalidated', at: Date.now() });
+            if (approvalPeriodChanged) {
+                entry.history.push({
+                    action: effectivePeriod.approvalWaitDays > 0
+                        ? 'approval_period_adjusted'
+                        : 'approval_period_revalidated',
+                    at: now,
+                    requestedStartDate: effectivePeriod.requestedStartDate,
+                    effectiveStartDate: effectivePeriod.startDate,
+                    endDate: effectivePeriod.endDate,
+                    approvalWaitDays: effectivePeriod.approvalWaitDays,
+                });
+            }
+            if (routeChanged || limitsChanged) {
+                entry.history.push({ action: 'approval_route_revalidated', at: now });
+            }
             return entry;
         });
         await updateRequestMessage(client, request).catch(() => false);
@@ -580,10 +647,6 @@ async function approveRequest(client, requestId, approver, { exceptionReason = n
     const normalizedExceptionReason = normalizeReason(exceptionReason);
     if (request.exceedReasons?.length && !normalizedExceptionReason) {
         throw new VacationError('Для одобрения превышения лимитов укажите причину исключения.', 'exception_reason_required');
-    }
-    const today = getMoscowDateKey();
-    if (compareDateKeys(request.endDate, today) < 0) {
-        throw new VacationError('Период заявки уже полностью закончился.', 'vacation_period_expired');
     }
     request = await updateStoredRequest(requestId, (entry) => {
         if (entry.status !== 'pending') throw new VacationError('Заявка уже обработана.', 'state_conflict');
@@ -1161,6 +1224,7 @@ async function processSchedules(client) {
     const db = readDb();
     const today = getMoscowDateKey();
     const candidates = (db.vacationRequests || []).filter((entry) => (
+        guildConfigService.isEnabled(entry.guildId) &&
         ['approved', 'scheduled', 'activation_failed', 'active', 'awaiting_return'].includes(entry.status)
     ));
     for (const record of candidates) {
@@ -1314,6 +1378,7 @@ module.exports = {
     confirmReturn,
     countInclusiveDays,
     createOrUpdateRequest,
+    getEffectiveApprovalPeriod,
     getActivationRoleIdsToRemove,
     getActiveRequest,
     getBlockingVacation,

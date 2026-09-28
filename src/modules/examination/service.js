@@ -795,7 +795,11 @@ async function processPendingRequestReminders(client) {
     const now = Date.now();
     const db = readDb();
     const requestIds = (db.examinationRequests || [])
-        .filter((request) => request.status === 'pending' && !request.pendingReminderAt)
+        .filter((request) => (
+            request.status === 'pending' &&
+            !request.pendingReminderAt &&
+            guildConfigService.isEnabled(request.guildId)
+        ))
         .map((request) => request.requestId);
     let reminded = 0;
 
@@ -839,7 +843,10 @@ async function processPendingRequestReminders(client) {
 async function processWaitingVoiceRequests(client) {
     const db = readDb();
     const requestIds = (db.examinationRequests || [])
-        .filter((request) => request.status === 'waiting_for_voice')
+        .filter((request) => (
+            request.status === 'waiting_for_voice' &&
+            guildConfigService.isEnabled(request.guildId)
+        ))
         .map((request) => request.requestId);
     for (const requestId of requestIds) {
         try {

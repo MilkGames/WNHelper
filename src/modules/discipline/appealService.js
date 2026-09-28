@@ -869,10 +869,13 @@ async function withdrawAppeal(client, { guild, applicant, appealId }) {
 
 async function processPendingAppeals(client) {
     const appeals = (readDb().disciplineAppeals || []).filter((appeal) => (
-        appeal.status === 'creating' ||
-        appeal.status === 'publication_failed' ||
-        appeal.status === 'pending_review' ||
-        appeal.status === 'routing_failed'
+        guildConfigService.isEnabled(appeal.guildId) &&
+        (
+            appeal.status === 'creating' ||
+            appeal.status === 'publication_failed' ||
+            appeal.status === 'pending_review' ||
+            appeal.status === 'routing_failed'
+        )
     ));
     for (const snapshot of appeals) {
         try {

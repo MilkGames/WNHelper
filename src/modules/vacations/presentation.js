@@ -58,13 +58,41 @@ function getOverdueActionLabel(action) {
 }
 
 function buildRequestEmbed(request) {
+    const requestedStartDate = request.requestedStartDate || request.startDate;
+    const requestedEndDate = request.requestedEndDate || request.endDate;
+    const periodAdjusted = requestedStartDate !== request.startDate || requestedEndDate !== request.endDate;
     const fields = [
         { name: 'Сотрудник', value: formatMember(request.memberId, request.memberDisplayName) },
         { name: 'Тип отпуска', value: request.typeName, inline: true },
-        { name: 'Период', value: `${formatDate(request.startDate)}-${formatDate(request.endDate)}`, inline: true },
-        { name: 'Продолжительность', value: `${request.durationDays} дн.`, inline: true },
-        { name: 'Причина', value: request.reason || 'Не указана' },
     ];
+    if (periodAdjusted) {
+        fields.push(
+            {
+                name: 'Запрошенный период',
+                value: `${formatDate(requestedStartDate)}-${formatDate(requestedEndDate)}`,
+                inline: true,
+            },
+            {
+                name: 'Фактический период',
+                value: `${formatDate(request.startDate)}-${formatDate(request.endDate)}`,
+                inline: true,
+            },
+            { name: 'Фактическая продолжительность', value: `${request.durationDays} дн.`, inline: true },
+        );
+        if (Number(request.approvalWaitDays || 0) > 0) {
+            fields.push({
+                name: 'Не учтено из-за ожидания рассмотрения',
+                value: `${request.approvalWaitDays} дн.`,
+                inline: true,
+            });
+        }
+    } else {
+        fields.push(
+            { name: 'Период', value: `${formatDate(request.startDate)}-${formatDate(request.endDate)}`, inline: true },
+            { name: 'Продолжительность', value: `${request.durationDays} дн.`, inline: true },
+        );
+    }
+    fields.push({ name: 'Причина', value: request.reason || 'Не указана' });
     if (request.status === 'completed' && request.effectiveEndDate && request.actualDurationDays) {
         fields.push({
             name: 'Фактически использовано',

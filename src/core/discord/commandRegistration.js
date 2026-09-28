@@ -1,6 +1,6 @@
 /*
  * WN Helper Discord Bot
- * Copyright (C) 2024-2026 MilkGames
+ * Copyright (C) 2026 MilkGames
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,118 +17,80 @@
  */
 const { getClientId } = require('../config/applicationConfig');
 const { ContextMenuCommandBuilder, ApplicationCommandType, REST, Routes } = require('discord.js');
-const areCommandsDifferent = require('./areCommandsDifferent');
-const getApplicationCommands = require('./getApplicationCommands');
 const { getCommands } = require('../../app/commandRegistry');
-
+const guildConfigService = require('../config/guildConfigService');
+const { getDatabaseStatus } = require('../database/status');
 const logger = require('../logging/logger');
+
+function getContextCommands() {
+    return [
+        new ContextMenuCommandBuilder()
+            .setName('Повысить по отчёту')
+            .setType(ApplicationCommandType.Message)
+            .toJSON(),
+        new ContextMenuCommandBuilder()
+            .setName('Уволить по заявлению')
+            .setType(ApplicationCommandType.Message)
+            .toJSON(),
+        new ContextMenuCommandBuilder()
+            .setName('Принять сотрудника')
+            .setType(ApplicationCommandType.User)
+            .toJSON(),
+        new ContextMenuCommandBuilder()
+            .setName('Изменить ранг')
+            .setType(ApplicationCommandType.User)
+            .toJSON(),
+        new ContextMenuCommandBuilder()
+            .setName('Уволить сотрудника')
+            .setType(ApplicationCommandType.User)
+            .toJSON(),
+    ];
+}
+
+function getSlashCommands() {
+    return getCommands().map((command) => ({
+        name: command.name,
+        description: command.description,
+        options: Array.isArray(command.options) ? command.options : [],
+    }));
+}
 
 module.exports = async (client) => {
     const clientId = getClientId();
-    const commandsData = [
-        new ContextMenuCommandBuilder()
-            .setName('Повысить по отчёту')
-            .setType(ApplicationCommandType.Message),
-        new ContextMenuCommandBuilder()
-            .setName('Уволить по заявлению')
-            .setType(ApplicationCommandType.Message),
-        new ContextMenuCommandBuilder()
-            .setName('Принять сотрудника')
-            .setType(ApplicationCommandType.User),
-        new ContextMenuCommandBuilder()
-            .setName('Изменить ранг')
-            .setType(ApplicationCommandType.User),
-        new ContextMenuCommandBuilder()
-            .setName('Уволить сотрудника')
-            .setType(ApplicationCommandType.User),
-    ];
-
     const rest = new REST().setToken(process.env.token);
 
     try {
-        logger.info('Перезагружаю контекстные команды на всех серверах...');
-
-        await rest.put(
-            Routes.applicationCommands(clientId),
-            { body: commandsData },
-        );
-
-        logger.info('Контекстные команды зарегистрированы глобально.');
+        await rest.put(Routes.applicationCommands(clientId), { body: [] });
+        logger.info('Глобальные команды очищены: команды WN Helper регистрируются только на включённых серверах.');
     } catch (error) {
-        logger.error('Ошибка регистрации глобальных контекстных команд', error);
+        logger.error('Не удалось очистить глобальные команды', error);
     }
 
-    const localCommands = getCommands();
+    const enabledCommands = [...getSlashCommands(), ...getContextCommands()];
+    const recoveryMode = getDatabaseStatus().recoveryMode;
 
     for (const guild of client.guilds.cache.values()) {
-        const serverId = guild.id;
-        const serverName = guild.name || serverId;
-        let applicationCommands;
+        const guildId = String(guild.id);
+        const serverName = guild.name || guildId;
+        const enabled = recoveryMode ? true : guildConfigService.isEnabled(guildId);
+        const body = enabled ? enabledCommands : [];
         try {
-            applicationCommands = await getApplicationCommands(client, serverId);
+            await rest.put(
+                Routes.applicationGuildCommands(clientId, guildId),
+                { body },
+            );
+            logger.info(enabled
+                ? `Команды зарегистрированы на сервере ${serverName}.`
+                : `Команды удалены с отключённого сервера ${serverName}.`, {
+                guildId,
+                count: body.length,
+            });
         } catch (error) {
-            logger.error('Не удалось получить команды сервера', {
-                guildId: serverId,
+            logger.error('Не удалось синхронизировать команды сервера', {
+                guildId,
                 serverName,
+                enabled,
             }, error);
-            continue;
-        }
-
-        const activeLocalCommandNames = new Set(localCommands.map((command) => command.name));
-
-        for (const existingCommand of applicationCommands.cache.values()) {
-            if (activeLocalCommandNames.has(existingCommand.name)) continue;
-
-            try {
-                await applicationCommands.delete(existingCommand.id);
-                logger.info(`Удалена устаревшая команда "${existingCommand.name}" на сервере ${serverName}.`);
-            } catch (error) {
-                logger.error('Не удалось удалить устаревшую команду', {
-                    guildId: serverId,
-                    serverName,
-                    command: existingCommand.name,
-                }, error);
-            }
-        }
-
-        for (const localCommand of localCommands) {
-            const { name, description, options } = localCommand;
-            const commandOptions = Array.isArray(options) ? options : [];
-            logger.info(`Обрабатываю команду "${name}" на сервере ${serverName}...`);
-
-            try {
-                const existingCommand = applicationCommands.cache.find(
-                    (cmd) => cmd.name === name
-                );
-
-
-                if (existingCommand) {
-                    if (areCommandsDifferent(existingCommand, localCommand)) {
-                        await applicationCommands.edit(existingCommand.id, {
-                            description,
-                            options: commandOptions,
-                        });
-
-                        logger.info(`Изменена команда "${name}" на сервере ${serverName}.`);
-                    }
-                    continue;
-                }
-
-
-                await applicationCommands.create({
-                    name,
-                    description,
-                    options: commandOptions,
-                });
-
-                logger.info(`Успешно зарегистрирована команда "${name}" на сервере ${serverName}.`);
-            } catch (error) {
-                logger.error('Ошибка регистрации отдельной команды', {
-                    guildId: serverId,
-                    serverName,
-                    command: name,
-                }, error);
-            }
         }
     }
 };

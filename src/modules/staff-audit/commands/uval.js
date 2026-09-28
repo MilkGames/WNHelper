@@ -35,7 +35,7 @@ module.exports = {
     options: [
         {
             name: 'member',
-            description: 'Тег Discord или имя сотрудника.',
+            description: 'Discord ID или текстовое имя сотрудника.',
             required: true,
             type: ApplicationCommandOptionType.String,
         },

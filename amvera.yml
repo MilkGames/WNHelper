@@ -12,7 +12,6 @@ build:
     '*': /
 run:
   scriptName: src/index.js
-  command: npm run start
   persistenceMount: app/data
   containerPort: 80
 serviceType: compute

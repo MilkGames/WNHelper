@@ -94,6 +94,12 @@ async function reserveOperation({ type, guildId, actorId, target, payload, sourc
                 String(operation.sourceId) === String(sourceId)
             ))
             : null;
+        if (existing?.compacted === true) {
+            throw new StaffAuditError(
+                'Это действие уже было выполнено ранее.',
+                'staff_operation_already_completed'
+            );
+        }
         if (existing) return clone(existing);
 
         const now = Date.now();

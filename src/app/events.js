@@ -21,6 +21,7 @@ const registerCommands = require('../core/discord/commandRegistration');
 const readyLog = require('../core/runtime/readyLog');
 const { getApplicationReadinessStatus } = require('./readiness');
 const status = require('../core/runtime/status');
+const databaseGarbageCollector = require('./databaseGarbageCollector');
 
 module.exports = [
     {
@@ -35,7 +36,10 @@ module.exports = [
         id: 'app.registerCommands',
         order: 20,
         recoverySafe: true,
-        execute: registerCommands,
+        execute: async (client) => {
+            await databaseGarbageCollector(client);
+            await registerCommands(client);
+        },
     },
     {
         event: 'clientReady',

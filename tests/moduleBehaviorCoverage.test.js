@@ -206,22 +206,27 @@ test('экзамен с нулевым лимитом попыток остаё�
     }
 });
 
-test('массовый кадровый ввод разбирает кавычки, упоминания и значения по умолчанию', () => {
+test('массовый кадровый ввод разбирает action, технические упоминания и текстовые имена', () => {
     const { parseMassAuditText } = require('../src/modules/staff-audit/massAuditParser');
     const result = parseMassAuditText([
         '# комментарий',
         '/invite member:<@123456789012345678> static:42 rank:3 department:amd',
-        'rank member:123456789012345679 static:43 from:3 rank:4 reason:"Отличная работа" keep_department:true',
-        'uval member:123456789012345680 static:44 reason:"По собственному желанию"',
+        'rank member:Michael Lindberg static:43 action:3-4 reason:"Отличная работа" keep_department:true',
+        'uval member:@milkgames static:44 reason:"По собственному желанию"',
     ].join('\n'));
 
     assert.equal(result.length, 3);
     assert.equal(result[0].reason, 'Собеседование');
     assert.equal(result[0].memberId, '123456789012345678');
+    assert.equal(result[0].memberInput, '123456789012345678');
+    assert.equal(result[1].memberId, null);
+    assert.equal(result[1].memberInput, 'Michael Lindberg');
+    assert.equal(result[1].actionInput, '3-4');
     assert.equal(result[1].reason, 'Отличная работа');
     assert.equal(result[1].staticId, '43');
     assert.equal(result[1].keepDepartment, true);
     assert.equal(result[2].action, 'uval');
+    assert.equal(result[2].memberInput, '@milkgames');
     assert.equal(result[2].staticId, '44');
 });
 
@@ -234,6 +239,14 @@ test('массовый кадровый ввод отклоняет дубли �
     assert.throws(
         () => parseMassAuditText('invite member:123456789012345678 unknown:value'),
         (error) => error?.code === 'mass_audit_unknown_argument'
+    );
+    assert.throws(
+        () => parseMassAuditText('rank member:123456789012345678 from:2 rank:3 reason:test'),
+        (error) => error?.code === 'mass_audit_unknown_argument'
+    );
+    assert.throws(
+        () => parseMassAuditText('invite member:Michael Lindberg rank:1'),
+        (error) => error?.code === 'mass_audit_static_required'
     );
 });
 

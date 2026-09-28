@@ -51,7 +51,7 @@ function createMassAuditModal() {
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true)
         .setMaxLength(4000)
-        .setPlaceholder('invite member:123 rank:1 reason:"Принят"');
+        .setPlaceholder('rank member:Michael Lindberg static:7658 action:2-3 reason:"Отчёт"');
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
 }
